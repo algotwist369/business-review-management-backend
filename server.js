@@ -38,7 +38,7 @@ if (cluster.isPrimary) {
     app.use(compression());
     app.use(morgan('dev'))
     app.use(cors({
-        origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
+        origin: process.env.CORS_ORIGIN || `https://business-review-management-frontend.vercel.app` || 'http://localhost:5173',
         credentials: true,
     }));
 
@@ -82,7 +82,7 @@ if (cluster.isPrimary) {
     // ==========================
     // 🚀 Start Server
     // ==========================
-    const PORT = process.env.PORT || 5000;
+    const PORT = process.env.PORT || 7001;
 
     const server = app.listen(PORT, () => {
         console.log(`Worker ${process.pid} running on port ${PORT}`);
