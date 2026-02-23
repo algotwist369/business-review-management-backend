@@ -38,7 +38,7 @@ if (cluster.isPrimary) {
     app.use(compression());
     app.use(morgan('dev'))
     app.use(cors({
-        origin: 'http://localhost:5173',
+        origin: process.env.CORS_ORIGIN || `https://business-review-management-frontend.vercel.app` || 'http://localhost:5173',
         credentials: true,
     }));
 
