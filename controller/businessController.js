@@ -11,8 +11,8 @@ const addBusiness = async (req, res) => {
             return res.status(400).json({ error: 'All fields are required' });
         }
 
-        // Ensure only admin can create
-        if (!req.user || req.user.role !== 'admin') {
+        // Ensure only admin or super_admin can create
+        if (!req.user || (req.user.role !== 'admin' && req.user.role !== 'super_admin')) {
             return res.status(403).json({ error: 'Only admin can create business' });
         }
 
@@ -53,15 +53,26 @@ const addBusiness = async (req, res) => {
 // gett all business
 const getAllBusiness = async (req, res) => {
     try {
-        if (!req.user || (req.user.role !== 'admin' && req.user.role !== 'user')) {
+        if (!req.user || (req.user.role !== 'admin' && req.user.role !== 'super_admin' && req.user.role !== 'user')) {
             return res.status(403).json({ error: 'Unauthorized access' });
         }
 
-        const { page = 1, limit = 10 } = req.query;
+        const { page = 1, limit = 10, search = '' } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
 
         // Filter: Admin sees all, users only see active
-        const filter = req.user.role === 'admin' ? {} : { is_active: true };
+        let filter = (req.user.role === 'admin' || req.user.role === 'super_admin') ? {} : { is_active: true };
+
+        // Add search filter if search term provided
+        if (search) {
+            filter = {
+                ...filter,
+                $or: [
+                    { business_name: { $regex: search, $options: 'i' } },
+                    { short_code: { $regex: search, $options: 'i' } },
+                ],
+            };
+        }
 
         const businesses = await Business.find(filter)
             .sort({ createdAt: -1 })
@@ -86,7 +97,7 @@ const getAllBusiness = async (req, res) => {
 // edit business
 const editBusiness = async (req, res) => {
     try {
-        if (!req.user || req.user.role !== 'admin') {
+        if (!req.user || (req.user.role !== 'admin' && req.user.role !== 'super_admin')) {
             return res.status(403).json({ error: 'Only admin can edit business' });
         }
 
@@ -126,7 +137,7 @@ const editBusiness = async (req, res) => {
 // delete business\
 const deleteBusiness = async (req, res) => {
     try {
-        if (!req.user || req.user.role !== 'admin') {
+        if (!req.user || (req.user.role !== 'admin' && req.user.role !== 'super_admin')) {
             return res.status(403).json({ error: 'Only admin can delete business' });
         }
 
@@ -153,7 +164,7 @@ const deleteBusiness = async (req, res) => {
 // update business status (active/inactive)
 const updateBusinessStatus = async (req, res) => {
     try {
-        if (!req.user || req.user.role !== 'admin') {
+        if (!req.user || (req.user.role !== 'admin' && req.user.role !== 'super_admin')) {
             return res.status(403).json({ error: 'Only admin can update status' });
         }
 
@@ -185,7 +196,6 @@ const updateBusinessStatus = async (req, res) => {
         return res.status(500).json({ error: 'Internal Server Error' });
     }
 };
-
 
 module.exports = {
     addBusiness,

@@ -38,7 +38,7 @@ if (cluster.isPrimary) {
     app.use(compression());
     app.use(morgan('dev'))
     app.use(cors({
-        origin: process.env.CORS_ORIGIN || `https://business-review-management-frontend.vercel.app` || 'http://localhost:5173',
+        origin: 'http://localhost:5173',
         credentials: true,
     }));
 
@@ -55,6 +55,7 @@ if (cluster.isPrimary) {
     // 📦 Routes
     // ==========================
     app.use('/api/users', require('./routes/userRoute'));
+    app.use('/api/super-admin', require('./routes/superAdminRoute'));
     app.use('/api/business', require('./routes/businessRoute'));
     app.use('/api/reviews', require('./routes/reviewRoute'));
 

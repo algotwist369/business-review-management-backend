@@ -106,8 +106,8 @@ const getReviewsByUser = async (req, res) => {
         const { userId } = req.params;
         const { page = 1, limit = 20, filterType, startDate: start, endDate: end } = req.query;
 
-        // Allow access if admin OR if viewing own reviews
-        if (!req.user || (req.user.role !== 'admin' && req.user.id.toString() !== userId)) {
+        // Allow access if admin, super_admin OR if viewing own reviews
+        if (!req.user || (req.user.role !== 'admin' && req.user.role !== 'super_admin' && req.user.id.toString() !== userId)) {
             return res.status(403).json({ error: 'Access denied: Admin only or own reviews only' });
         }
 
@@ -337,7 +337,7 @@ const markAsPaidCustomDate = async (req, res) => {
 // stats -> total reviews by user, total reviews for a business, average reviews per business, etc.
 const getReviewStats = async (req, res) => {
     try {
-        if (req.user.role !== 'admin') {
+        if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
             return res.status(403).json({ error: 'Admin only' });
         }
 

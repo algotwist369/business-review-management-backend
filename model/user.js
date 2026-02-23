@@ -25,7 +25,7 @@ const user_schema = new mongoose.Schema(
 
     role: {
       type: String,
-      enum: ['admin', 'user'],
+      enum: ['super_admin', 'admin', 'user'],
       default: 'user',
     },
 
@@ -46,6 +46,11 @@ const user_schema = new mongoose.Schema(
 
     last_login: {
       type: Date,
+    },
+    managed_by: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
     },
   },
   {

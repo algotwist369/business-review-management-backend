@@ -58,23 +58,24 @@ const logout = async (req, res) => {
     });
 };
 
-// get all users - admin
+// get all users - admin/super_admin
 const getAllUsers = async (req, res) => {
     try {
-        if (req.user.role !== 'admin') {
-            return res.status(403).json({ error: 'Admin only' });
-        }
-
         const { page = 1, limit = 20 } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
 
+        // Filter: Super admin sees all (except themselves), admin sees only assigned users
+        let filter = {
+            is_deleted: false,
+            _id: { $ne: new mongoose.Types.ObjectId(req.user.id || req.user._id) }
+        };
+
+        if (req.user.role === 'admin') {
+            filter.managed_by = new mongoose.Types.ObjectId(req.user.id || req.user._id);
+        }
+
         const users = await User.aggregate([
-            {
-                $match: {
-                    is_deleted: false,
-                    _id: { $ne: new mongoose.Types.ObjectId(req.user._id) }
-                }
-            },
+            { $match: filter },
             { $sort: { createdAt: -1 } },
             { $skip: skip },
             { $limit: Number(limit) },
@@ -99,10 +100,7 @@ const getAllUsers = async (req, res) => {
             }
         ]);
 
-        const total = await User.countDocuments({
-            is_deleted: false,
-            _id: { $ne: req.user._id }
-        });
+        const total = await User.countDocuments(filter);
 
         return res.status(200).json({
             total,
@@ -117,25 +115,26 @@ const getAllUsers = async (req, res) => {
     }
 };
 
-// get user by id - by admin
+// get user by id - by admin/super_admin
 const getUserById = async (req, res) => {
     try {
-        if (req.user.role !== 'admin') {
-            return res.status(403).json({ error: 'Admin only' });
-        }
-
         const { id } = req.params;
 
         if (!mongoose.Types.ObjectId.isValid(id)) {
             return res.status(400).json({ error: 'Invalid user ID' });
         }
 
-        const user = await User.findOne({ _id: id, is_deleted: false })
+        let filter = { _id: id, is_deleted: false };
+        if (req.user.role === 'admin') {
+            filter.managed_by = req.user.id || req.user._id;
+        }
+
+        const user = await User.findOne(filter)
             .select('-__v')
             .lean();
 
         if (!user) {
-            return res.status(404).json({ error: 'User not found' });
+            return res.status(404).json({ error: 'User not found or access denied' });
         }
 
         return res.status(200).json(user);
@@ -146,13 +145,9 @@ const getUserById = async (req, res) => {
     }
 };
 
-// update user status (active/inactive) - by admin
+// update user status (active/inactive) - by admin/super_admin
 const updateUserStatus = async (req, res) => {
     try {
-        if (req.user.role !== 'admin') {
-            return res.status(403).json({ error: 'Admin only' });
-        }
-
         const { id } = req.params;
         const { is_active } = req.body;
 
@@ -164,14 +159,19 @@ const updateUserStatus = async (req, res) => {
             return res.status(400).json({ error: 'is_active must be boolean' });
         }
 
-        const updated = await User.findByIdAndUpdate(
-            id,
+        let filter = { _id: id };
+        if (req.user.role === 'admin') {
+            filter.managed_by = req.user.id || req.user._id;
+        }
+
+        const updated = await User.findOneAndUpdate(
+            filter,
             { is_active },
             { new: true }
         ).lean();
 
         if (!updated) {
-            return res.status(404).json({ error: 'User not found' });
+            return res.status(404).json({ error: 'User not found or access denied' });
         }
 
         return res.status(200).json(updated);
@@ -182,27 +182,28 @@ const updateUserStatus = async (req, res) => {
     }
 };
 
-// delete user (admin)
+// delete user (admin/super_admin)
 const deleteUser = async (req, res) => {
     try {
-        if (req.user.role !== 'admin') {
-            return res.status(403).json({ error: 'Admin only' });
-        }
-
         const { id } = req.params;
 
         if (!mongoose.Types.ObjectId.isValid(id)) {
             return res.status(400).json({ error: 'Invalid user ID' });
         }
 
-        const deleted = await User.findByIdAndUpdate(
-            id,
+        let filter = { _id: id };
+        if (req.user.role === 'admin') {
+            filter.managed_by = req.user.id || req.user._id;
+        }
+
+        const deleted = await User.findOneAndUpdate(
+            filter,
             { is_deleted: true, is_active: false },
             { new: true }
         );
 
         if (!deleted) {
-            return res.status(404).json({ error: 'User not found' });
+            return res.status(404).json({ error: 'User not found or access denied' });
         }
 
         return res.status(200).json({
