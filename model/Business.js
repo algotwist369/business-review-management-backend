@@ -6,7 +6,7 @@ const businessSchema = new mongoose.Schema(
             type: String,
             required: true,
             trim: true,
-            unique: true, // DB-level uniqueness (faster & safer)
+            unique: true,
             index: true,
         },
 
@@ -20,6 +20,11 @@ const businessSchema = new mongoose.Schema(
             trim: true,
             unique: true,
             index: true,
+        },
+
+        business_link: {
+            type: String,
+            trim: true,
         },
 
         user_id: {

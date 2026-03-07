@@ -4,7 +4,7 @@ const Business = require('../model/Business');
 // add business
 const addBusiness = async (req, res) => {
     try {
-        const { business_name, location, short_code } = req.body;
+        const { business_name, location, short_code, business_link } = req.body;
 
         // Basic validation (fast fail)
         if (!business_name || !location || !short_code) {
@@ -32,6 +32,7 @@ const addBusiness = async (req, res) => {
             business_name,
             location,
             short_code,
+            business_link,
             is_active: true,
             user_id: req.user._id,
         });
@@ -69,6 +70,7 @@ const getAllBusiness = async (req, res) => {
                 ...filter,
                 $or: [
                     { business_name: { $regex: search, $options: 'i' } },
+                    { location: { $regex: search, $options: 'i' } },
                     { short_code: { $regex: search, $options: 'i' } },
                 ],
             };
