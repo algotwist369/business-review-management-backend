@@ -73,8 +73,11 @@ const getAllBusiness = async (req, res) => {
         // Filter: Admin/Super Admin sees all, users only see assigned & active
         let filter = {};
         if (req.user.role === 'user') {
+            const assignedIds = Array.isArray(req.user.assigned_businesses) 
+                ? req.user.assigned_businesses 
+                : [];
             filter = {
-                _id: { $in: req.user.assigned_businesses || [] },
+                _id: { $in: assignedIds },
                 is_active: true
             };
         } else if (req.user.role === 'admin' || req.user.role === 'super_admin') {
