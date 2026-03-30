@@ -95,8 +95,7 @@ const getAllUsers = async (req, res) => {
             {
                 $project: {
                     userReviews: 0,
-                    __v: 0,
-                    assigned_businesses: 1,
+                    __v: 0
                 }
             }
         ]);
