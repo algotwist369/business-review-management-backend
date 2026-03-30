@@ -58,7 +58,16 @@ const getAllBusiness = async (req, res) => {
             return res.status(403).json({ error: 'Unauthorized access' });
         }
 
-        const { page = 1, limit = 10, search = '', business_link = '', is_active } = req.query;
+        const { 
+            page = 1, 
+            limit = 10, 
+            search = '', 
+            business_link = '', 
+            is_active, 
+            has_link,
+            sortBy = 'createdAt', 
+            sortOrder = 'desc' 
+        } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
 
         // Filter: Admin/Super Admin sees all, users only see assigned & active
@@ -79,7 +88,14 @@ const getAllBusiness = async (req, res) => {
             filter.is_active = is_active === 'true';
         }
 
-        // Add business_link filter if provided
+        // Add has_link filter if provided
+        if (has_link === 'true') {
+            filter.business_link = { $exists: true, $ne: '' };
+        } else if (has_link === 'false') {
+            filter.business_link = { $in: [null, ''] };
+        }
+
+        // Add business_link search filter if provided
         if (business_link) {
             filter.business_link = { $regex: business_link, $options: 'i' };
         }
@@ -97,8 +113,17 @@ const getAllBusiness = async (req, res) => {
             };
         }
 
+        const sort = {};
+        if (sortBy === 'business_link_presence') {
+            // This is a bit tricky to sort by presence in one go.
+            // But we can just sort by the field itself.
+            sort['business_link'] = sortOrder === 'desc' ? -1 : 1;
+        } else {
+            sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+        }
+
         const businesses = await Business.find(filter)
-            .sort({ createdAt: -1 })
+            .sort(sort)
             .skip(skip)
             .limit(Number(limit))
             .lean(); // low memory usage
