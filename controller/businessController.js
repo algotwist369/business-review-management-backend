@@ -58,11 +58,31 @@ const getAllBusiness = async (req, res) => {
             return res.status(403).json({ error: 'Unauthorized access' });
         }
 
-        const { page = 1, limit = 10, search = '' } = req.query;
+        const { page = 1, limit = 10, search = '', business_link = '', is_active } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
 
-        // Filter: Admin sees all, users only see active
-        let filter = (req.user.role === 'admin' || req.user.role === 'super_admin') ? {} : { is_active: true };
+        // Filter: Admin/Super Admin sees all, users only see assigned & active
+        let filter = {};
+        if (req.user.role === 'user') {
+            filter = {
+                _id: { $in: req.user.assigned_businesses || [] },
+                is_active: true
+            };
+        } else if (req.user.role === 'admin' || req.user.role === 'super_admin') {
+            filter = {};
+        } else {
+            return res.status(403).json({ error: 'Unauthorized access' });
+        }
+
+        // Add status filter if provided (for admin/super_admin)
+        if (is_active !== undefined) {
+            filter.is_active = is_active === 'true';
+        }
+
+        // Add business_link filter if provided
+        if (business_link) {
+            filter.business_link = { $regex: business_link, $options: 'i' };
+        }
 
         // Add search filter if search term provided
         if (search) {
@@ -72,6 +92,7 @@ const getAllBusiness = async (req, res) => {
                     { business_name: { $regex: search, $options: 'i' } },
                     { location: { $regex: search, $options: 'i' } },
                     { short_code: { $regex: search, $options: 'i' } },
+                    { business_link: { $regex: search, $options: 'i' } },
                 ],
             };
         }

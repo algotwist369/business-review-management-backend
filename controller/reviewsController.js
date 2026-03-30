@@ -10,6 +10,14 @@ const addReview = async (req, res) => {
             return res.status(400).json({ error: 'Invalid business ID' });
         }
 
+        // Check if user is assigned to this business
+        if (req.user.role === 'user') {
+            const isAssigned = req.user.assigned_businesses.some(bid => bid.toString() === business_id);
+            if (!isAssigned) {
+                return res.status(403).json({ error: 'You are not assigned to this business' });
+            }
+        }
+
         if (review_count < 0) {
             return res.status(400).json({ error: 'Review count must be positive' });
         }

@@ -52,6 +52,12 @@ const user_schema = new mongoose.Schema(
       ref: 'User',
       default: null,
     },
+    assigned_businesses: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Business',
+      },
+    ],
   },
   {
     timestamps: true, // gives createdAt & updatedAt

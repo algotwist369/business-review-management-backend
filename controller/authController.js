@@ -216,11 +216,58 @@ const deleteUser = async (req, res) => {
     }
 };
 
+// assign businesses to user (admin/super_admin)
+const assignBusinessesToUser = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { businessIds } = req.body; // Array of business IDs
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ error: 'Invalid user ID' });
+        }
+
+        if (!Array.isArray(businessIds)) {
+            return res.status(400).json({ error: 'businessIds must be an array' });
+        }
+
+        // Validate all business IDs
+        const isValidIds = businessIds.every(bid => mongoose.Types.ObjectId.isValid(bid));
+        if (!isValidIds) {
+            return res.status(400).json({ error: 'One or more invalid business IDs' });
+        }
+
+        let filter = { _id: id };
+        if (req.user.role === 'admin') {
+            filter.managed_by = req.user.id || req.user._id;
+        }
+
+        const updatedUser = await User.findOneAndUpdate(
+            filter,
+            { $set: { assigned_businesses: businessIds } },
+            { new: true }
+        ).select('-__v').lean();
+
+        if (!updatedUser) {
+            return res.status(404).json({ error: 'User not found or access denied' });
+        }
+
+        return res.status(200).json({
+            message: 'Businesses assigned successfully',
+            user: updatedUser
+        });
+
+    } catch (error) {
+        console.error('Assign Businesses Error:', error);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
 module.exports = {
     googleAuth,
     logout,
     getAllUsers,
     getUserById,
     updateUserStatus,
-    deleteUser
+    deleteUser,
+    assignBusinessesToUser
 }

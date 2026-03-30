@@ -8,6 +8,7 @@ const {
     getUserById,
     updateUserStatus,
     deleteUser,
+    assignBusinessesToUser,
 } = require('../controller/authController');
 
 const authMiddleware = require('../middlewares/auth.middleware');
@@ -24,5 +25,6 @@ router.get('/', authMiddleware, adminMiddleware, getAllUsers);
 router.get('/:id', authMiddleware, adminMiddleware, getUserById);
 router.patch('/:id/status', authMiddleware, adminMiddleware, updateUserStatus);
 router.delete('/:id', authMiddleware, adminMiddleware, deleteUser);
+router.post('/:id/assign-businesses', authMiddleware, adminMiddleware, assignBusinessesToUser);
 
 module.exports = router;
