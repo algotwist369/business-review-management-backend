@@ -292,7 +292,7 @@ const markAsPaid = async (req, res) => {
         const updated = await Review.findOneAndUpdate(
             { _id: id },
             { $set: { is_paid: true, paid_at: new Date(), paid_review_count: review.review_count } },
-            { new: true, runValidators: true }
+            { returnDocument: 'after', runValidators: true }
         ).lean();
 
         if (!updated) {

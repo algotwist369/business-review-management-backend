@@ -167,7 +167,7 @@ const updateUserStatus = async (req, res) => {
         const updated = await User.findOneAndUpdate(
             filter,
             { is_active },
-            { new: true }
+            { returnDocument: 'after' }
         ).lean();
 
         if (!updated) {
@@ -199,7 +199,7 @@ const deleteUser = async (req, res) => {
         const deleted = await User.findOneAndUpdate(
             filter,
             { is_deleted: true, is_active: false },
-            { new: true }
+            { returnDocument: 'after' }
         );
 
         if (!deleted) {
@@ -244,7 +244,7 @@ const assignBusinessesToUser = async (req, res) => {
         const updatedUser = await User.findOneAndUpdate(
             filter,
             { $set: { assigned_businesses: businessIds } },
-            { new: true }
+            { returnDocument: 'after' }
         ).select('-__v').lean();
 
         if (!updatedUser) {

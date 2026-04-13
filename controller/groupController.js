@@ -87,7 +87,7 @@ const addBusinessToGroup = async (req, res) => {
         const updated = await Group.findOneAndUpdate(
             { _id: groupId, userId: req.user._id },
             { $addToSet: { businessIds: businessId } },
-            { new: true }
+            { returnDocument: 'after' }
         )
             .populate('businessIds', BUSINESS_POPULATE_FIELDS)
             .lean();
@@ -115,7 +115,7 @@ const removeBusinessFromGroup = async (req, res) => {
         const updated = await Group.findOneAndUpdate(
             { _id: groupId, userId: req.user._id },
             { $pull: { businessIds: businessId } },
-            { new: true }
+            { returnDocument: 'after' }
         )
             .populate('businessIds', BUSINESS_POPULATE_FIELDS)
             .lean();
@@ -158,10 +158,68 @@ const getBusinessesInGroup = async (req, res) => {
     }
 };
 
+const updateGroupName = async (req, res) => {
+    try {
+        const { groupId } = req.params;
+        const { groupName } = req.body;
+
+        if (!mongoose.Types.ObjectId.isValid(groupId)) {
+            return res.status(400).json({ error: 'Invalid group ID' });
+        }
+
+        if (!groupName || !groupName.trim()) {
+            return res.status(400).json({ error: 'groupName is required' });
+        }
+
+        const updated = await Group.findOneAndUpdate(
+            { _id: groupId, userId: req.user._id },
+            { $set: { groupName: groupName.trim() } },
+            { returnDocument: 'after', runValidators: true }
+        )
+            .populate('businessIds', BUSINESS_POPULATE_FIELDS)
+            .lean();
+
+        if (!updated) {
+            return res.status(404).json({ error: 'Group not found' });
+        }
+
+        return res.status(200).json(updated);
+    } catch (error) {
+        if (error.code === 11000) {
+            return res.status(400).json({ error: 'Group name already exists' });
+        }
+        console.error('Update Group Name Error:', error);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
+const deleteGroup = async (req, res) => {
+    try {
+        const { groupId } = req.params;
+
+        if (!mongoose.Types.ObjectId.isValid(groupId)) {
+            return res.status(400).json({ error: 'Invalid group ID' });
+        }
+
+        const deleted = await Group.findOneAndDelete({ _id: groupId, userId: req.user._id }).lean();
+
+        if (!deleted) {
+            return res.status(404).json({ error: 'Group not found' });
+        }
+
+        return res.status(200).json({ message: 'Group deleted successfully' });
+    } catch (error) {
+        console.error('Delete Group Error:', error);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
 module.exports = {
     createGroup,
     getUserGroups,
     addBusinessToGroup,
     removeBusinessFromGroup,
     getBusinessesInGroup,
+    updateGroupName,
+    deleteGroup,
 };
