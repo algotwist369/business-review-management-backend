@@ -1,6 +1,10 @@
 
 const Review = require('../model/review');
 const mongoose = require('mongoose');
+const Business = require('../model/Business');
+
+const isAssignedBusiness = (user, businessId) =>
+    (user.assigned_businesses || []).some((id) => id.toString() === businessId.toString());
 // Add Review
 const addReview = async (req, res) => {
     try {
@@ -10,10 +14,14 @@ const addReview = async (req, res) => {
             return res.status(400).json({ error: 'Invalid business ID' });
         }
 
+        const business = await Business.findById(business_id).select('_id').lean();
+        if (!business) {
+            return res.status(404).json({ error: 'Business not found' });
+        }
+
         // Check if user is assigned to this business
         if (req.user.role === 'user') {
-            const isAssigned = req.user.assigned_businesses.some(bid => bid.toString() === business_id);
-            if (!isAssigned) {
+            if (!isAssignedBusiness(req.user, business_id)) {
                 return res.status(403).json({ error: 'You are not assigned to this business' });
             }
         }
@@ -395,6 +403,59 @@ const getReviewStats = async (req, res) => {
     }
 };
 
+const getReviewsForBusiness = async (req, res) => {
+    try {
+        const { businessId } = req.params;
+        const { page = 1, limit = 20 } = req.query;
+        const pageNumber = Number(page);
+        const limitNumber = Number(limit);
+
+        if (!mongoose.Types.ObjectId.isValid(businessId)) {
+            return res.status(400).json({ error: 'Invalid business ID' });
+        }
+
+        if (!Number.isFinite(pageNumber) || pageNumber < 1 || !Number.isFinite(limitNumber) || limitNumber < 1) {
+            return res.status(400).json({ error: 'Invalid pagination parameters' });
+        }
+
+        if (
+            req.user.role === 'user' &&
+            !isAssignedBusiness(req.user, businessId)
+        ) {
+            return res.status(403).json({ error: 'You are not assigned to this business' });
+        }
+
+        const skip = (pageNumber - 1) * limitNumber;
+        const query = { business_id: businessId };
+
+        const [reviews, total, totalReviewAggregate] = await Promise.all([
+            Review.find(query)
+                .populate('business_id', 'business_name short_code location')
+                .populate('user_id', 'email username')
+                .sort({ review_date: -1 })
+                .skip(skip)
+                .limit(limitNumber)
+                .lean(),
+            Review.countDocuments(query),
+            Review.aggregate([
+                { $match: { business_id: new mongoose.Types.ObjectId(businessId) } },
+                { $group: { _id: null, count: { $sum: '$review_count' } } },
+            ]),
+        ]);
+
+        return res.status(200).json({
+            total,
+            page: pageNumber,
+            limit: limitNumber,
+            total_review_count: totalReviewAggregate[0]?.count || 0,
+            data: reviews,
+        });
+    } catch (error) {
+        console.error('Get Reviews For Business Error:', error);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
 module.exports = {
     addReview,
     editReview,
@@ -402,5 +463,6 @@ module.exports = {
     getReviewsByUser,
     markAsPaid,
     markAsPaidCustomDate,
-    getReviewStats
+    getReviewStats,
+    getReviewsForBusiness,
 }

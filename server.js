@@ -58,6 +58,7 @@ if (cluster.isPrimary) {
     app.use('/api/super-admin', require('./routes/superAdminRoute'));
     app.use('/api/business', require('./routes/businessRoute'));
     app.use('/api/reviews', require('./routes/reviewRoute'));
+    app.use('/api/groups', require('./routes/groupRoute'));
 
 
     // ==========================

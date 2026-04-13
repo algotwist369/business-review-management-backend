@@ -9,6 +9,7 @@ const {
     markAsPaid,
     markAsPaidCustomDate,
     getReviewStats,
+    getReviewsForBusiness,
 } = require('../controller/reviewsController');
 
 const authMiddleware = require('../middlewares/auth.middleware');
@@ -18,6 +19,7 @@ const adminMiddleware = require('../middlewares/admin.middleware');
 router.post('/', authMiddleware, addReview);
 router.put('/:id', authMiddleware, editReview);
 router.delete('/:id', authMiddleware, deleteReview);
+router.get('/business/:businessId', authMiddleware, getReviewsForBusiness);
 
 // ===== ADMIN ROUTES =====
 router.get('/user/:userId', authMiddleware, getReviewsByUser);
