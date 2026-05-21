@@ -24,6 +24,7 @@ if (cluster.isPrimary) {
     // Worker Process
     const express = require('express');
     const connectDB = require('./config/db');
+    const { connectReviewDB } = require('./config/reviewDb');
     const cors = require('cors');
     const helmet = require('helmet');
     const compression = require('compression');
@@ -34,14 +35,29 @@ if (cluster.isPrimary) {
     // ==========================
     // 🔒 Security Middlewares
     // ==========================
+    const allowlist = process.env.CORS_ORIGIN
+        ? process.env.CORS_ORIGIN.split(',').map(origin => origin.trim())
+        : [
+            'https://business-review-management-frontend.vercel.app',
+            'http://localhost:5173'
+        ];
+
+    app.use(cors({
+        origin: function (origin, callback) {
+            // Allow non-browser requests
+            if (!origin) return callback(null, true);
+
+            if (allowlist.includes(origin)) {
+                callback(null, true);
+            } else {
+                callback(new Error(`CORS blocked for origin: ${origin}`));
+            }
+        },
+        credentials: true,
+    }));
     app.use(helmet());
     app.use(compression());
     app.use(morgan('dev'))
-    app.use(cors({
-        origin: process.env.CORS_ORIGIN || `https://business-review-management-frontend.vercel.app` || 'http://localhost:5173',
-        credentials: true,
-    }));
-
     app.use(express.json({ limit: '10mb' }));
     app.use(express.urlencoded({ extended: true }));
 
@@ -50,6 +66,9 @@ if (cluster.isPrimary) {
     // 🗄 MongoDB Connection
     // ==========================
     connectDB();
+    connectReviewDB().catch((error) => {
+        console.error('Review MongoDB connection error:', error);
+    });
 
     // ==========================
     // 📦 Routes
@@ -59,6 +78,7 @@ if (cluster.isPrimary) {
     app.use('/api/business', require('./routes/businessRoute'));
     app.use('/api/reviews', require('./routes/reviewRoute'));
     app.use('/api/groups', require('./routes/groupRoute'));
+    app.use('/api/ai-reviews', require('./routes/aiReviewRoute'));
 
 
     // ==========================

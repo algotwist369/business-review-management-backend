@@ -9,11 +9,12 @@ const authMiddleware = async (req, res, next) => {
             return res.status(401).json({ error: 'Authentication required' });
         }
 
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret');
 
-        const user = await User.findById(decoded.id).select('_id role is_active assigned_businesses');
+        const user = await User.findById(decoded.id)
+            .select('_id email username role is_active is_deleted assigned_businesses managed_by ai_review_access');
 
-        if (!user || !user.is_active) {
+        if (!user || !user.is_active || user.is_deleted) {
             return res.status(401).json({ error: 'Invalid or inactive user' });
         }
 

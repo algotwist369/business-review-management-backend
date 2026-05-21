@@ -23,6 +23,11 @@ const user_schema = new mongoose.Schema(
       sparse: true,
     },
 
+    password_hash: {
+      type: String,
+      select: false,
+    },
+
     role: {
       type: String,
       enum: ['super_admin', 'admin', 'user'],
@@ -35,6 +40,11 @@ const user_schema = new mongoose.Schema(
     },
 
     is_deleted: {
+      type: Boolean,
+      default: false,
+    },
+
+    ai_review_access: {
       type: Boolean,
       default: false,
     },

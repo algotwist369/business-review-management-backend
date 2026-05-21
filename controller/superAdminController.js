@@ -60,7 +60,7 @@ const updateUserRole = async (req, res) => {
             id,
             { role },
             { new: true }
-        ).select('-__v').lean();
+        ).select('-__v -password_hash').lean();
 
         if (!updatedUser) {
             return res.status(404).json({ error: 'User not found' });

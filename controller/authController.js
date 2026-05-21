@@ -1,52 +1,204 @@
 const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 const User = require('../model/user');
 const Reviews = require('../model/review');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'secret';
 const JWT_EXPIRES = '7d';
+const PASSWORD_MIN_LENGTH = 8;
+
+const normalizeEmail = (email = '') => email.trim().toLowerCase();
+
+const buildAuthResponse = (user) => ({
+    id: user._id,
+    email: user.email,
+    username: user.username,
+    role: user.role,
+    ai_review_access: user.role === 'super_admin' || !!user.ai_review_access,
+    has_password: !!user.password_hash,
+});
+
+const signToken = (user) => jwt.sign(
+    { id: user._id, role: user.role },
+    JWT_SECRET,
+    { expiresIn: JWT_EXPIRES }
+);
+
+const validatePassword = (password) =>
+    typeof password === 'string' && password.length >= PASSWORD_MIN_LENGTH;
 
 // signup or login with google 
 const googleAuth = async (req, res) => {
     try {
         const { email, username, google_id } = req.body;
+        const normalizedEmail = normalizeEmail(email);
 
-        if (!email || !google_id) {
+        if (!normalizedEmail || !google_id) {
             return res.status(400).json({ error: 'Email and Google ID required' });
         }
 
-        let user = await User.findOne({ email });
+        let user = await User.findOne({ email: normalizedEmail }).select('+password_hash');
 
         if (!user) {
             user = await User.create({
-                email,
+                email: normalizedEmail,
                 username,
                 google_id,
                 last_login: new Date(),
             });
         } else {
+            if (user.is_deleted || !user.is_active) {
+                return res.status(401).json({ error: 'Invalid or inactive user' });
+            }
+            if (!user.google_id) {
+                user.google_id = google_id;
+            }
+            if (!user.username && username) {
+                user.username = username;
+            }
             user.last_login = new Date();
             await user.save();
         }
 
-        const token = jwt.sign(
-            { id: user._id, role: user.role },
-            JWT_SECRET,
-            { expiresIn: JWT_EXPIRES }
-        );
+        const token = signToken(user);
 
         return res.status(200).json({
             message: 'Authentication successful',
             token,
-            user: {
-                id: user._id,
-                email: user.email,
-                role: user.role,
-            },
+            user: buildAuthResponse(user),
         });
 
     } catch (error) {
         console.error('Google Auth Error:', error);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
+// signup with email and password
+const signup = async (req, res) => {
+    try {
+        const { email, username, password } = req.body;
+        const normalizedEmail = normalizeEmail(email);
+
+        if (!normalizedEmail || !validatePassword(password)) {
+            return res.status(400).json({
+                error: `Email and password of at least ${PASSWORD_MIN_LENGTH} characters are required`,
+            });
+        }
+
+        const existingUser = await User.findOne({ email: normalizedEmail }).lean();
+        if (existingUser) {
+            return res.status(409).json({ error: 'Account already exists for this email' });
+        }
+
+        const user = await User.create({
+            email: normalizedEmail,
+            username,
+            password_hash: await bcrypt.hash(password, 12),
+            last_login: new Date(),
+        });
+
+        return res.status(201).json({
+            message: 'Signup successful',
+            token: signToken(user),
+            user: buildAuthResponse(user),
+        });
+    } catch (error) {
+        console.error('Signup Error:', error);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
+// login with email and password
+const login = async (req, res) => {
+    try {
+        const { email, password } = req.body;
+        const normalizedEmail = normalizeEmail(email);
+
+        if (!normalizedEmail || !password) {
+            return res.status(400).json({ error: 'Email and password required' });
+        }
+
+        const user = await User.findOne({
+            email: normalizedEmail,
+            is_deleted: false,
+        }).select('+password_hash');
+
+        if (!user || !user.is_active || !user.password_hash) {
+            return res.status(401).json({ error: 'Invalid email or password' });
+        }
+
+        const passwordMatches = await bcrypt.compare(password, user.password_hash);
+        if (!passwordMatches) {
+            return res.status(401).json({ error: 'Invalid email or password' });
+        }
+
+        user.last_login = new Date();
+        await user.save();
+
+        return res.status(200).json({
+            message: 'Authentication successful',
+            token: signToken(user),
+            user: buildAuthResponse(user),
+        });
+    } catch (error) {
+        console.error('Login Error:', error);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
+const getCurrentUser = async (req, res) => {
+    try {
+        const user = await User.findById(req.user._id).select('+password_hash');
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        return res.status(200).json({
+            ...buildAuthResponse(user),
+        });
+    } catch (error) {
+        console.error('Get Current User Error:', error);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
+const updatePassword = async (req, res) => {
+    try {
+        const { current_password, new_password } = req.body;
+
+        if (!validatePassword(new_password)) {
+            return res.status(400).json({
+                error: `New password must be at least ${PASSWORD_MIN_LENGTH} characters`,
+            });
+        }
+
+        const user = await User.findById(req.user._id).select('+password_hash');
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        if (user.password_hash) {
+            if (!current_password) {
+                return res.status(400).json({ error: 'Current password required' });
+            }
+
+            const passwordMatches = await bcrypt.compare(current_password, user.password_hash);
+            if (!passwordMatches) {
+                return res.status(401).json({ error: 'Current password is incorrect' });
+            }
+        }
+
+        const hadPassword = !!user.password_hash;
+        user.password_hash = await bcrypt.hash(new_password, 12);
+        await user.save();
+
+        return res.status(200).json({
+            message: hadPassword ? 'Password updated successfully' : 'Password set successfully',
+        });
+    } catch (error) {
+        console.error('Update Password Error:', error);
         return res.status(500).json({ error: 'Internal Server Error' });
     }
 };
@@ -95,6 +247,7 @@ const getAllUsers = async (req, res) => {
             {
                 $project: {
                     userReviews: 0,
+                    password_hash: 0,
                     __v: 0
                 }
             }
@@ -130,7 +283,7 @@ const getUserById = async (req, res) => {
         }
 
         const user = await User.findOne(filter)
-            .select('-__v')
+            .select('-__v -password_hash')
             .lean();
 
         if (!user) {
@@ -168,7 +321,7 @@ const updateUserStatus = async (req, res) => {
             filter,
             { is_active },
             { returnDocument: 'after' }
-        ).lean();
+        ).select('-password_hash').lean();
 
         if (!updated) {
             return res.status(404).json({ error: 'User not found or access denied' });
@@ -245,7 +398,7 @@ const assignBusinessesToUser = async (req, res) => {
             filter,
             { $set: { assigned_businesses: businessIds } },
             { returnDocument: 'after' }
-        ).select('-__v').lean();
+        ).select('-__v -password_hash').lean();
 
         if (!updatedUser) {
             return res.status(404).json({ error: 'User not found or access denied' });
@@ -264,7 +417,11 @@ const assignBusinessesToUser = async (req, res) => {
 
 module.exports = {
     googleAuth,
+    signup,
+    login,
     logout,
+    getCurrentUser,
+    updatePassword,
     getAllUsers,
     getUserById,
     updateUserStatus,

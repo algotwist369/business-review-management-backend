@@ -3,7 +3,11 @@ const router = express.Router();
 
 const {
     googleAuth,
+    signup,
+    login,
     logout,
+    getCurrentUser,
+    updatePassword,
     getAllUsers,
     getUserById,
     updateUserStatus,
@@ -17,7 +21,11 @@ const adminMiddleware = require('../middlewares/admin.middleware');
 
 // Public
 router.post('/google-auth', googleAuth);
+router.post('/signup', signup);
+router.post('/login', login);
 router.post('/logout', authMiddleware, logout);
+router.get('/me', authMiddleware, getCurrentUser);
+router.patch('/password', authMiddleware, updatePassword);
 
 
 // Admin
