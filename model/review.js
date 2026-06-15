@@ -45,6 +45,16 @@ const reviewSchema = new mongoose.Schema(
             type: Number,
             default: 0,
         },
+        paid_review_price: {
+            type: Number,
+            default: 0,
+            min: 0,
+        },
+        paid_amount: {
+            type: Number,
+            default: 0,
+            min: 0,
+        },
     },
     {
         timestamps: true,

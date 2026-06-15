@@ -2,9 +2,131 @@
 const Review = require('../model/review');
 const mongoose = require('mongoose');
 const Business = require('../model/Business');
+const ReviewPaymentSetting = require('../model/reviewPaymentSetting');
 
 const isAssignedBusiness = (user, businessId) =>
     (user.assigned_businesses || []).some((id) => id.toString() === businessId.toString());
+
+const canManageReview = async (user, review) => {
+    if (!review) return false;
+    if (review.user_id.toString() === user._id.toString()) return true;
+    if (user.role === 'super_admin') return true;
+
+    if (user.role === 'admin') {
+        const reviewOwner = await mongoose.model('User').findOne({
+            _id: review.user_id,
+            managed_by: user._id,
+            is_deleted: false,
+        }).select('_id').lean();
+
+        return !!reviewOwner;
+    }
+
+    return false;
+};
+
+const buildDateRangePaymentQuery = async (user, startDate, endDate, userId) => {
+    const query = {
+        review_date: {
+            $gte: new Date(startDate),
+            $lte: new Date(endDate),
+        },
+    };
+
+    if (userId) {
+        if (!mongoose.Types.ObjectId.isValid(userId)) {
+            const error = new Error('Invalid user ID');
+            error.statusCode = 400;
+            throw error;
+        }
+
+        if (user.role === 'admin') {
+            const managedUser = await mongoose.model('User').findOne({
+                _id: userId,
+                managed_by: user._id,
+                is_deleted: false,
+            }).select('_id').lean();
+
+            if (!managedUser && user._id.toString() !== userId.toString()) {
+                const error = new Error('Access denied');
+                error.statusCode = 403;
+                throw error;
+            }
+        }
+
+        query.user_id = new mongoose.Types.ObjectId(userId);
+        return query;
+    }
+
+    if (user.role === 'admin') {
+        const managedUsers = await mongoose.model('User')
+            .find({ managed_by: user._id, is_deleted: false })
+            .select('_id')
+            .lean();
+
+        query.user_id = {
+            $in: [
+                user._id,
+                ...managedUsers.map((managedUser) => managedUser._id),
+            ],
+        };
+    }
+
+    return query;
+};
+
+const parsePerReviewPrice = (value) => {
+    const price = Number(value);
+    return Number.isFinite(price) && price > 0 ? price : null;
+};
+
+const getReviewPaymentSetting = async () => {
+    const setting = await ReviewPaymentSetting.findOne({ key: 'global' }).lean();
+    return setting || { key: 'global', per_review_price: 0 };
+};
+
+const resolvePerReviewPrice = async (value) => {
+    const requestedPrice = parsePerReviewPrice(value);
+    if (requestedPrice) return requestedPrice;
+
+    const setting = await getReviewPaymentSetting();
+    return parsePerReviewPrice(setting.per_review_price);
+};
+
+const getPaymentSetting = async (req, res) => {
+    try {
+        const setting = await getReviewPaymentSetting();
+        return res.status(200).json(setting);
+    } catch (error) {
+        console.error('Get Payment Setting Error:', error);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
+const updatePaymentSetting = async (req, res) => {
+    try {
+        const perReviewPrice = parsePerReviewPrice(req.body?.perReviewPrice);
+        if (!perReviewPrice) {
+            return res.status(400).json({ error: 'Valid per review price is required' });
+        }
+
+        const setting = await ReviewPaymentSetting.findOneAndUpdate(
+            { key: 'global' },
+            {
+                $set: {
+                    per_review_price: perReviewPrice,
+                    updated_by: req.user._id,
+                }
+            },
+            { upsert: true, new: true, runValidators: true }
+        ).lean();
+
+        return res.status(200).json(setting);
+    } catch (error) {
+        console.error('Update Payment Setting Error:', error);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
 // Add Review
 const addReview = async (req, res) => {
     try {
@@ -56,9 +178,14 @@ const editReview = async (req, res) => {
             return res.status(400).json({ error: 'Invalid review ID' });
         }
 
-        const review = await Review.findOne({ _id: id, user_id: req.user._id });
+        const review = await Review.findById(id);
         if (!review) {
             return res.status(404).json({ error: 'Review not found' });
+        }
+
+        const hasAccess = await canManageReview(req.user, review);
+        if (!hasAccess) {
+            return res.status(403).json({ error: 'Access denied' });
         }
 
         const updateData = { review_count, review_link, review_date };
@@ -96,10 +223,17 @@ const deleteReview = async (req, res) => {
             return res.status(400).json({ error: 'Invalid review ID' });
         }
 
-        const deleted = await Review.findOneAndDelete({
-            _id: id,
-            user_id: req.user._id,
-        });
+        const review = await Review.findById(id);
+        if (!review) {
+            return res.status(404).json({ error: 'Review not found' });
+        }
+
+        const hasAccess = await canManageReview(req.user, review);
+        if (!hasAccess) {
+            return res.status(403).json({ error: 'Access denied' });
+        }
+
+        const deleted = await Review.findByIdAndDelete(id);
 
         if (!deleted) {
             return res.status(404).json({ error: 'Review not found' });
@@ -157,7 +291,7 @@ const getReviewsByUser = async (req, res) => {
 
         // Fetch paginated reviews
         const reviews = await Review.find(query)
-            .select('review_count review_link review_date business_id is_paid paid_at paid_review_count updatedAt')
+            .select('review_count review_link review_date business_id is_paid paid_at paid_review_count paid_review_price paid_amount updatedAt')
             .populate({
                 path: 'business_id',
                 select: 'business_name short_code location',
@@ -239,6 +373,9 @@ const getReviewsByUser = async (req, res) => {
                                 0
                             ]
                         }
+                    },
+                    total_paid_amount: {
+                        $sum: { $cond: [{ $eq: ['$is_paid', true] }, '$paid_amount', 0] }
                     }
                 }
             }
@@ -252,7 +389,8 @@ const getReviewsByUser = async (req, res) => {
             total_entries: 0,
             total_paid_entries: 0,
             adjustment_unpaid: 0,
-            adjustment_extra_paid: 0
+            adjustment_extra_paid: 0,
+            total_paid_amount: 0
         };
 
         return res.status(200).json({
@@ -264,6 +402,7 @@ const getReviewsByUser = async (req, res) => {
             total_paid_business: userStats.total_paid_entries,
             adjustment_unpaid: userStats.adjustment_unpaid,
             adjustment_extra_paid: userStats.adjustment_extra_paid,
+            total_paid_amount: userStats.total_paid_amount,
             page: Number(page),
             limit: Number(limit),
             data: reviews,
@@ -289,9 +428,27 @@ const markAsPaid = async (req, res) => {
             return res.status(404).json({ error: 'Review not found' });
         }
 
+        const hasAccess = await canManageReview(req.user, review);
+        if (!hasAccess) {
+            return res.status(403).json({ error: 'Access denied' });
+        }
+
+        const perReviewPrice = await resolvePerReviewPrice(review.is_paid ? review.paid_review_price : req.body?.perReviewPrice);
+        if (!perReviewPrice) {
+            return res.status(400).json({ error: 'Please set per review price first' });
+        }
+
         const updated = await Review.findOneAndUpdate(
             { _id: id },
-            { $set: { is_paid: true, paid_at: new Date(), paid_review_count: review.review_count } },
+            {
+                $set: {
+                    is_paid: true,
+                    paid_at: new Date(),
+                    paid_review_count: review.review_count,
+                    paid_review_price: perReviewPrice,
+                    paid_amount: review.review_count * perReviewPrice,
+                }
+            },
             { returnDocument: 'after', runValidators: true }
         ).lean();
 
@@ -307,45 +464,129 @@ const markAsPaid = async (req, res) => {
     }
 };
 
+// mark as unpaid
+const markAsUnpaid = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ error: 'Invalid review ID' });
+        }
+
+        const review = await Review.findById(id);
+        if (!review) {
+            return res.status(404).json({ error: 'Review not found' });
+        }
+
+        const hasAccess = await canManageReview(req.user, review);
+        if (!hasAccess) {
+            return res.status(403).json({ error: 'Access denied' });
+        }
+
+        const updated = await Review.findOneAndUpdate(
+            { _id: id },
+            { $set: { is_paid: false, paid_at: null, paid_review_count: 0, paid_review_price: 0, paid_amount: 0 } },
+            { returnDocument: 'after', runValidators: true }
+        ).lean();
+
+        if (!updated) {
+            return res.status(404).json({ error: 'Review not found' });
+        }
+
+        return res.status(200).json(updated);
+
+    } catch (error) {
+        console.error('Mark as Unpaid Error:', error);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
 // mark as paid to custum date wise review (multiple mark as paid)
 const markAsPaidCustomDate = async (req, res) => {
     try {
-        const { startDate, endDate } = req.body;
+        const { startDate, endDate, userId } = req.body;
+        const perReviewPrice = await resolvePerReviewPrice(req.body?.perReviewPrice);
         if (!startDate || !endDate) {
             return res.status(400).json({ error: 'Start date and end date are required' });
         }
-        const updated = await Review.updateMany(
-            {
-                review_date: {
-                    $gte: new Date(startDate),
-                    $lte: new Date(endDate),
+        if (!perReviewPrice) {
+            return res.status(400).json({ error: 'Please set per review price first' });
+        }
+        const query = await buildDateRangePaymentQuery(req.user, startDate, endDate, userId);
+
+        const reviews = await Review.find(query).select('_id review_count').lean();
+
+        if (!reviews.length) {
+            return res.status(404).json({ error: 'Review not found' });
+        }
+
+        const paidAt = new Date();
+        const paidReviewCount = reviews.reduce((sum, review) => sum + (Number(review.review_count) || 0), 0);
+        const totalAmount = paidReviewCount * perReviewPrice;
+        const updated = await Review.bulkWrite(
+            reviews.map((review) => ({
+                updateOne: {
+                    filter: { _id: review._id },
+                    update: {
+                        $set: {
+                            is_paid: true,
+                            paid_at: paidAt,
+                            paid_review_count: review.review_count,
+                            paid_review_price: perReviewPrice,
+                            paid_amount: review.review_count * perReviewPrice,
+                        },
+                    },
                 },
-            },
+            }))
+        );
+
+        return res.status(200).json({
+            matchedCount: updated.matchedCount,
+            modifiedCount: updated.modifiedCount,
+            paidReviewCount,
+            perReviewPrice,
+            totalAmount,
+        });
+    } catch (error) {
+        console.error('Mark as Paid Custom Date Error:', error);
+        if (error.statusCode) {
+            return res.status(error.statusCode).json({ error: error.message });
+        }
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+}
+
+// mark as unpaid to custom date wise review (multiple mark as unpaid)
+const markAsUnpaidCustomDate = async (req, res) => {
+    try {
+        const { startDate, endDate, userId } = req.body;
+        if (!startDate || !endDate) {
+            return res.status(400).json({ error: 'Start date and end date are required' });
+        }
+        const query = await buildDateRangePaymentQuery(req.user, startDate, endDate, userId);
+
+        const updated = await Review.updateMany(
+            query,
             {
                 $set: {
-                    is_paid: true,
-                    paid_at: new Date()
+                    is_paid: false,
+                    paid_at: null,
+                    paid_review_count: 0,
+                    paid_review_price: 0,
+                    paid_amount: 0
                 }
             }
         );
 
-        // Update paid_review_count for all reviews in this range
-        await Review.updateMany(
-            {
-                review_date: {
-                    $gte: new Date(startDate),
-                    $lte: new Date(endDate),
-                },
-                is_paid: true
-            },
-            [{ $set: { paid_review_count: "$review_count" } }]
-        );
         if (!updated) {
             return res.status(404).json({ error: 'Review not found' });
         }
         return res.status(200).json(updated);
     } catch (error) {
-        console.error('Mark as Paid Custom Date Error:', error);
+        console.error('Mark as Unpaid Custom Date Error:', error);
+        if (error.statusCode) {
+            return res.status(error.statusCode).json({ error: error.message });
+        }
         return res.status(500).json({ error: 'Internal Server Error' });
     }
 }
@@ -403,6 +644,7 @@ const getReviewStats = async (req, res) => {
     }
 };
 
+// Get reviews for a specific business with pagination and access control
 const getReviewsForBusiness = async (req, res) => {
     try {
         const { businessId } = req.params;
@@ -455,14 +697,18 @@ const getReviewsForBusiness = async (req, res) => {
         return res.status(500).json({ error: 'Internal Server Error' });
     }
 };
-
+ 
 module.exports = {
     addReview,
     editReview,
     deleteReview,
     getReviewsByUser,
+    getPaymentSetting,
+    updatePaymentSetting,
     markAsPaid,
     markAsPaidCustomDate,
+    markAsUnpaid,
+    markAsUnpaidCustomDate,
     getReviewStats,
     getReviewsForBusiness,
 }
