@@ -15,6 +15,7 @@ const buildAuthResponse = (user) => ({
     email: user.email,
     username: user.username,
     role: user.role,
+    scopes: user.scopes || ['review_management'],
     ai_review_access: user.role === 'super_admin' || !!user.ai_review_access,
     has_password: !!user.password_hash,
 });
@@ -415,6 +416,53 @@ const assignBusinessesToUser = async (req, res) => {
     }
 };
 
+// assign scopes to user (admin/super_admin)
+const assignScopesToUser = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { scopes } = req.body; // Array of scopes
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ error: 'Invalid user ID' });
+        }
+
+        if (!Array.isArray(scopes)) {
+            return res.status(400).json({ error: 'scopes must be an array' });
+        }
+
+        // Validate all scopes
+        const validScopes = ['review_management', 'gbp_record_management'];
+        const isValidScopes = scopes.every(scope => validScopes.includes(scope));
+        if (!isValidScopes) {
+            return res.status(400).json({ error: 'One or more invalid scopes' });
+        }
+
+        let filter = { _id: id };
+        if (req.user.role === 'admin') {
+            filter.managed_by = req.user.id || req.user._id;
+        }
+
+        const updatedUser = await User.findOneAndUpdate(
+            filter,
+            { $set: { scopes: scopes } },
+            { returnDocument: 'after' }
+        ).select('-__v -password_hash').lean();
+
+        if (!updatedUser) {
+            return res.status(404).json({ error: 'User not found or access denied' });
+        }
+
+        return res.status(200).json({
+            message: 'Scopes assigned successfully',
+            user: updatedUser
+        });
+
+    } catch (error) {
+        console.error('Assign Scopes Error:', error);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
 module.exports = {
     googleAuth,
     signup,
@@ -426,5 +474,6 @@ module.exports = {
     getUserById,
     updateUserStatus,
     deleteUser,
-    assignBusinessesToUser
+    assignBusinessesToUser,
+    assignScopesToUser
 }

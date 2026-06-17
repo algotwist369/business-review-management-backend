@@ -34,6 +34,12 @@ const user_schema = new mongoose.Schema(
       default: 'user',
     },
 
+    scopes: {
+      type: [String],
+      enum: ['review_management', 'gbp_record_management'],
+      default: ['review_management'],
+    },
+
     is_active: {
       type: Boolean,
       default: true,

@@ -79,6 +79,7 @@ if (cluster.isPrimary) {
     app.use('/api/reviews', require('./routes/reviewRoute'));
     app.use('/api/groups', require('./routes/groupRoute'));
     app.use('/api/ai-reviews', require('./routes/aiReviewRoute'));
+    app.use('/api/gbp-updates', require('./routes/gbpUpdatesRoute'));
 
 
     // ==========================
