@@ -49,7 +49,10 @@ const getTargetUserForGrant = async (actor, userId) => {
 
     if (actor.role === 'admin') {
         const actorId = actor._id.toString();
-        if (target.role !== 'user' || target.managed_by?.toString() !== actorId) {
+        const isManaged = Array.isArray(target.managed_by)
+            ? target.managed_by.some(id => id.toString() === actorId)
+            : target.managed_by?.toString() === actorId;
+        if (target.role !== 'user' || !isManaged) {
             return { error: 'Admin can grant AI review access to managed users only', status: 403 };
         }
         return { target };

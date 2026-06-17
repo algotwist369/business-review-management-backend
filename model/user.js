@@ -63,11 +63,12 @@ const user_schema = new mongoose.Schema(
     last_login: {
       type: Date,
     },
-    managed_by: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-      default: null,
-    },
+    managed_by: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+      },
+    ],
     assigned_businesses: [
       {
         type: mongoose.Schema.Types.ObjectId,
@@ -79,6 +80,63 @@ const user_schema = new mongoose.Schema(
     timestamps: true, // gives createdAt & updatedAt
   }
 )
+
+// Auto-migration: Clean, flatten, and convert managed_by to array of ObjectIds on startup
+mongoose.connection.on('open', async () => {
+  try {
+    const db = mongoose.connection.db;
+    const users = await db.collection('users').find({}).toArray();
+
+    let migratedCount = 0;
+    for (const user of users) {
+      let flatList = [];
+      const flatten = (val) => {
+        if (Array.isArray(val)) {
+          val.forEach(flatten);
+        } else if (val) {
+          const strVal = val.toString().trim();
+          if (mongoose.Types.ObjectId.isValid(strVal)) {
+            flatList.push(new mongoose.Types.ObjectId(strVal));
+          }
+        }
+      };
+      flatten(user.managed_by);
+
+      // Unique ObjectIds
+      const uniqueIds = [];
+      const seen = new Set();
+      for (const id of flatList) {
+        const idStr = id.toString();
+        if (!seen.has(idStr)) {
+          seen.add(idStr);
+          uniqueIds.push(id);
+        }
+      }
+
+      // Check if we actually need to update (compare lengths and elements)
+      const currentRaw = Array.isArray(user.managed_by) ? user.managed_by : (user.managed_by ? [user.managed_by] : []);
+      const currentStrList = currentRaw.map(id => id?.toString());
+      const newStrList = uniqueIds.map(id => id.toString());
+      
+      const needsUpdate = !Array.isArray(user.managed_by) ||
+                          currentStrList.length !== newStrList.length ||
+                          currentStrList.some((val, idx) => val !== newStrList[idx]);
+
+      if (needsUpdate) {
+        await db.collection('users').updateOne(
+          { _id: user._id },
+          { $set: { managed_by: uniqueIds } }
+        );
+        migratedCount++;
+      }
+    }
+    if (migratedCount > 0) {
+      console.log(`Migrated/Cleaned ${migratedCount} users' managed_by fields`);
+    }
+  } catch (err) {
+    console.error('User schema migration error:', err);
+  }
+})
 
 // Optional indexes
 user_schema.index({ role: 1 })

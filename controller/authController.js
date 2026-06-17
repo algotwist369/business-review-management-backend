@@ -204,6 +204,7 @@ const updatePassword = async (req, res) => {
     }
 };
 
+
 // logout
 const logout = async (req, res) => {
     return res.status(200).json({
@@ -214,7 +215,7 @@ const logout = async (req, res) => {
 // get all users - admin/super_admin
 const getAllUsers = async (req, res) => {
     try {
-        const { page = 1, limit = 20 } = req.query;
+        const { page = 1, limit = 20, is_active } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
 
         // Filter: Super admin sees all (except themselves), admin sees only assigned users
@@ -222,6 +223,10 @@ const getAllUsers = async (req, res) => {
             is_deleted: false,
             _id: { $ne: new mongoose.Types.ObjectId(req.user.id || req.user._id) }
         };
+
+        if (is_active !== undefined) {
+            filter.is_active = is_active === 'true';
+        }
 
         if (req.user.role === 'admin') {
             filter.managed_by = new mongoose.Types.ObjectId(req.user.id || req.user._id);

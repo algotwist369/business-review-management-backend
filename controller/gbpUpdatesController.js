@@ -85,14 +85,17 @@ const createGbpUpdate = async (req, res) => {
             targetUserId = user_id;
         }
 
-        // Check if record already exists for this business + month
-        let record = await GoogleBusinessProfileUpdates.findOne({ business_id, month });
+        // Check if record already exists for this user + business + month
+        let record = await GoogleBusinessProfileUpdates.findOne({ user_id: targetUserId, business_id, month });
 
         if (record) {
             // Check if requester is allowed to update this existing record
             if (req.user.role === 'admin') {
                 const recordUser = await User.findById(record.user_id).lean();
-                if (!recordUser || (recordUser.managed_by?.toString() !== req.user._id.toString() && record.user_id.toString() !== req.user._id.toString())) {
+                const isManaged = Array.isArray(recordUser.managed_by)
+                    ? recordUser.managed_by.some(id => id.toString() === req.user._id.toString())
+                    : recordUser.managed_by?.toString() === req.user._id.toString();
+                if (!recordUser || (!isManaged && record.user_id.toString() !== req.user._id.toString())) {
                     return res.status(403).json({ error: 'Access denied: Existing record belongs to a user you do not manage' });
                 }
             }
@@ -213,7 +216,10 @@ const updateGbpUpdate = async (req, res) => {
             }
         } else if (req.user.role === 'admin') {
             const recordUser = await User.findById(record.user_id).lean();
-            if (!recordUser || (recordUser.managed_by?.toString() !== req.user._id.toString() && record.user_id.toString() !== req.user._id.toString())) {
+            const isManaged = Array.isArray(recordUser.managed_by)
+                ? recordUser.managed_by.some(id => id.toString() === req.user._id.toString())
+                : recordUser.managed_by?.toString() === req.user._id.toString();
+            if (!recordUser || (!isManaged && record.user_id.toString() !== req.user._id.toString())) {
                 return res.status(403).json({ error: 'Access denied: Existing record belongs to a user you do not manage' });
             }
         }
@@ -285,6 +291,7 @@ const getGbpUpdates = async (req, res) => {
         if (req.user.role === 'user') {
             const assignedIds = req.user.assigned_businesses || [];
             filter.business_id = { $in: assignedIds };
+            filter.user_id = req.user._id;
         } else if (req.user.role === 'admin') {
             const managedUsers = await User.find({ managed_by: req.user._id, is_deleted: false }).select('_id').lean();
             const userIds = [req.user._id, ...managedUsers.map(u => u._id)];
@@ -363,7 +370,10 @@ const getGbpUpdateById = async (req, res) => {
             }
         } else if (req.user.role === 'admin') {
             const recordUser = await User.findById(record.user_id._id).lean();
-            if (!recordUser || (recordUser.managed_by?.toString() !== req.user._id.toString() && record.user_id._id.toString() !== req.user._id.toString())) {
+            const isManaged = Array.isArray(recordUser.managed_by)
+                ? recordUser.managed_by.some(id => id.toString() === req.user._id.toString())
+                : recordUser.managed_by?.toString() === req.user._id.toString();
+            if (!recordUser || (!isManaged && record.user_id._id.toString() !== req.user._id.toString())) {
                 return res.status(403).json({ error: 'Access denied: Existing record belongs to a user you do not manage' });
             }
         }
@@ -399,6 +409,9 @@ const getGbpUpdatesByBusiness = async (req, res) => {
         }
 
         let filter = { business_id: businessId };
+        if (req.user.role === 'user') {
+            filter.user_id = req.user._id;
+        }
         if (month) {
             filter.month = month;
         }
@@ -442,6 +455,7 @@ const getGbpUpdatesSummary = async (req, res) => {
         if (req.user.role === 'user') {
             const assignedIds = req.user.assigned_businesses || [];
             filter.business_id = { $in: assignedIds };
+            filter.user_id = req.user._id;
         } else if (req.user.role === 'admin') {
             const managedUsers = await User.find({ managed_by: req.user._id, is_deleted: false }).select('_id').lean();
             const userIds = [req.user._id, ...managedUsers.map(u => u._id)];
@@ -511,7 +525,10 @@ const deleteGbpUpdate = async (req, res) => {
             }
         } else if (req.user.role === 'admin') {
             const recordUser = await User.findById(record.user_id).lean();
-            if (!recordUser || (recordUser.managed_by?.toString() !== req.user._id.toString() && record.user_id.toString() !== req.user._id.toString())) {
+            const isManaged = Array.isArray(recordUser.managed_by)
+                ? recordUser.managed_by.some(id => id.toString() === req.user._id.toString())
+                : recordUser.managed_by?.toString() === req.user._id.toString();
+            if (!recordUser || (!isManaged && record.user_id.toString() !== req.user._id.toString())) {
                 return res.status(403).json({ error: 'Access denied: Record belongs to a user you do not manage' });
             }
         }

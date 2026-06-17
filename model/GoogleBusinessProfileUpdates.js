@@ -92,9 +92,10 @@ const GoogleBusinessProfileUpdatesSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 
-// One record per Business per Month
+// One record per User per Business per Month
 GoogleBusinessProfileUpdatesSchema.index(
     {
+        user_id: 1,
         business_id: 1,
         month: 1,
     },
@@ -107,5 +108,10 @@ const GoogleBusinessProfileUpdates = mongoose.model(
     'GoogleBusinessProfileUpdates',
     GoogleBusinessProfileUpdatesSchema
 );
+
+// Drop old unique index if it exists, to allow multiple users on the same business
+GoogleBusinessProfileUpdates.collection.dropIndex('business_id_1_month_1').catch(err => {
+    // Ignore if index doesn't exist
+});
 
 module.exports = GoogleBusinessProfileUpdates;
