@@ -294,7 +294,7 @@ const getReviewsByUser = async (req, res) => {
             .select('review_count review_link review_date business_id is_paid paid_at paid_review_count paid_review_price paid_amount updatedAt')
             .populate({
                 path: 'business_id',
-                select: 'business_name short_code location',
+                select: 'business_name short_code location business_link',
             })
             .sort({ review_date: -1 })
             .skip(skip)
@@ -672,7 +672,7 @@ const getReviewsForBusiness = async (req, res) => {
 
         const [reviews, total, totalReviewAggregate] = await Promise.all([
             Review.find(query)
-                .populate('business_id', 'business_name short_code location')
+                .populate('business_id', 'business_name short_code location business_link')
                 .populate('user_id', 'email username')
                 .sort({ review_date: -1 })
                 .skip(skip)

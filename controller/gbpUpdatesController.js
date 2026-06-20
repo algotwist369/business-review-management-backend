@@ -273,10 +273,15 @@ const updateGbpUpdate = async (req, res) => {
 // Get records (filtered by month, with search and pagination)
 const getGbpUpdates = async (req, res) => {
     try {
-        const { month, page = 1, limit = 20, search = '' } = req.query;
+        const { month, page = 1, limit = 20, search = '', status = '' } = req.query;
 
         if (month && !validateMonth(month)) {
             return res.status(400).json({ error: 'month must be in YYYY-MM format' });
+        }
+
+        const allowedStatus = ['pending', 'in_progress', 'completed', 'suspended', '404'];
+        if (status && !allowedStatus.includes(status)) {
+            return res.status(400).json({ error: `status must be one of: ${allowedStatus.join(', ')}` });
         }
 
         const skip = (Number(page) - 1) * Number(limit);
@@ -285,6 +290,10 @@ const getGbpUpdates = async (req, res) => {
 
         if (month) {
             filter.month = month;
+        }
+
+        if (status) {
+            filter.status = status;
         }
 
         // Role-based filters
