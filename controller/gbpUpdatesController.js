@@ -28,7 +28,11 @@ const createGbpUpdate = async (req, res) => {
             update_link,
             status,
             remarks,
-            user_id
+            user_id,
+            is_number_live,
+            is_whatsapp_live,
+            is_website_live,
+            is_email_live
         } = req.body;
 
         // Basic validations
@@ -111,6 +115,11 @@ const createGbpUpdate = async (req, res) => {
             if (status !== undefined) record.status = status;
             if (remarks !== undefined) record.remarks = remarks;
             
+            if (is_number_live !== undefined) record.is_number_live = is_number_live;
+            if (is_whatsapp_live !== undefined) record.is_whatsapp_live = is_whatsapp_live;
+            if (is_website_live !== undefined) record.is_website_live = is_website_live;
+            if (is_email_live !== undefined) record.is_email_live = is_email_live;
+            
             if (req.user.role !== 'user' && user_id) {
                 record.user_id = targetUserId;
             }
@@ -144,6 +153,10 @@ const createGbpUpdate = async (req, res) => {
                 update_link,
                 status: status || 'pending',
                 remarks,
+                is_number_live: is_number_live || {},
+                is_whatsapp_live: is_whatsapp_live || {},
+                is_website_live: is_website_live || {},
+                is_email_live: is_email_live || {},
                 updated_by: req.user._id
             });
 
@@ -182,7 +195,11 @@ const updateGbpUpdate = async (req, res) => {
             update_link,
             status,
             remarks,
-            user_id
+            user_id,
+            is_number_live,
+            is_whatsapp_live,
+            is_website_live,
+            is_email_live
         } = req.body;
 
         if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -248,6 +265,11 @@ const updateGbpUpdate = async (req, res) => {
         if (update_link !== undefined) record.update_link = update_link;
         if (status !== undefined) record.status = status;
         if (remarks !== undefined) record.remarks = remarks;
+
+        if (is_number_live !== undefined) record.is_number_live = is_number_live;
+        if (is_whatsapp_live !== undefined) record.is_whatsapp_live = is_whatsapp_live;
+        if (is_website_live !== undefined) record.is_website_live = is_website_live;
+        if (is_email_live !== undefined) record.is_email_live = is_email_live;
 
         record.updated_by = req.user._id;
 

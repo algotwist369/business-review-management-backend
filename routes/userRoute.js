@@ -14,6 +14,8 @@ const {
     deleteUser,
     assignBusinessesToUser,
     assignScopesToUser,
+    assignTeamTypeToUser,
+    globalSearch,
 } = require('../controller/authController');
 
 const authMiddleware = require('../middlewares/auth.middleware');
@@ -30,11 +32,13 @@ router.patch('/password', authMiddleware, updatePassword);
 
 
 // Admin
+router.get('/search/global', authMiddleware, globalSearch);
 router.get('/', authMiddleware, adminMiddleware, getAllUsers);
 router.get('/:id', authMiddleware, adminMiddleware, getUserById);
 router.patch('/:id/status', authMiddleware, adminMiddleware, updateUserStatus);
 router.delete('/:id', authMiddleware, adminMiddleware, deleteUser);
 router.post('/:id/assign-businesses', authMiddleware, adminMiddleware, assignBusinessesToUser);
 router.post('/:id/assign-scopes', authMiddleware, adminMiddleware, assignScopesToUser);
+router.post('/:id/assign-team-type', authMiddleware, adminMiddleware, assignTeamTypeToUser);
 
 module.exports = router;

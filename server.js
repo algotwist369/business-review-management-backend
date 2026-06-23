@@ -23,6 +23,7 @@ if (cluster.isPrimary) {
 } else {
     // Worker Process
     const express = require('express');
+    const mongoose = require('mongoose');
     const connectDB = require('./config/db');
     const { connectReviewDB } = require('./config/reviewDb');
     const cors = require('cors');
@@ -39,7 +40,8 @@ if (cluster.isPrimary) {
         ? process.env.CORS_ORIGIN.split(',').map(origin => origin.trim())
         : [
             'https://business-review-management-frontend.vercel.app',
-            'http://localhost:5173'
+            'http://localhost:5173',
+            'https://dos-omega.vercel.app'
         ];
 
     app.use(cors({
@@ -70,6 +72,12 @@ if (cluster.isPrimary) {
         console.error('Review MongoDB connection error:', error);
     });
 
+    // Start cron job only on the first worker or if not in cluster mode to avoid duplicate runs
+    if (!cluster.isWorker || (cluster.worker && cluster.worker.id === 1)) {
+        const startBusinessNewStatusJob = require('./jobs/businessNewStatus.job');
+        startBusinessNewStatusJob();
+    }
+
     // ==========================
     // 📦 Routes
     // ==========================
@@ -80,6 +88,12 @@ if (cluster.isPrimary) {
     app.use('/api/groups', require('./routes/groupRoute'));
     app.use('/api/ai-reviews', require('./routes/aiReviewRoute'));
     app.use('/api/gbp-updates', require('./routes/gbpUpdatesRoute'));
+    app.use('/api/social-media', require('./routes/socialMediaRoute'));
+    app.use('/api/canva', require('./routes/canvaRoute'));
+    app.use('/api/js-team', require('./routes/jsTeamRoute'));
+    app.use('/api/web-dev', require('./routes/webDevRoute'));
+    app.use('/api/leads-management', require('./routes/leadsRoute'));
+    app.use('/api/google-ads', require('./routes/googleAdsRoute'));
 
 
     // ==========================

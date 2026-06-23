@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const User = require('../model/user');
 const Reviews = require('../model/review');
+const Business = require('../model/Business');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'secret';
 const JWT_EXPIRES = '7d';
@@ -16,6 +17,8 @@ const buildAuthResponse = (user) => ({
     username: user.username,
     role: user.role,
     scopes: user.scopes || ['review_management'],
+    assigned_businesses: user.assigned_businesses || [],
+    team_type: user.team_type || 'all',
     ai_review_access: user.role === 'super_admin' || !!user.ai_review_access,
     has_password: !!user.password_hash,
 });
@@ -215,7 +218,7 @@ const logout = async (req, res) => {
 // get all users - admin/super_admin
 const getAllUsers = async (req, res) => {
     try {
-        const { page = 1, limit = 20, is_active } = req.query;
+        const { page = 1, limit = 20, is_active, team_type } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
 
         // Filter: Super admin sees all (except themselves), admin sees only assigned users
@@ -226,6 +229,10 @@ const getAllUsers = async (req, res) => {
 
         if (is_active !== undefined) {
             filter.is_active = is_active === 'true';
+        }
+
+        if (team_type && team_type !== 'all') {
+            filter.team_type = { $in: [team_type, 'all'] };
         }
 
         if (req.user.role === 'admin') {
@@ -436,7 +443,7 @@ const assignScopesToUser = async (req, res) => {
         }
 
         // Validate all scopes
-        const validScopes = ['review_management', 'gbp_record_management'];
+        const validScopes = ['review_management', 'gbp_record_management', 'social_media_management', 'jd_management', 'leads_management', 'web_dev_management'];
         const isValidScopes = scopes.every(scope => validScopes.includes(scope));
         if (!isValidScopes) {
             return res.status(400).json({ error: 'One or more invalid scopes' });
@@ -447,9 +454,23 @@ const assignScopesToUser = async (req, res) => {
             filter.managed_by = req.user.id || req.user._id;
         }
 
+        // Automatically map scopes to the correct team type
+        let team_type = 'all';
+        if (scopes.length === 1) {
+            const sc = scopes[0];
+            if (sc === 'review_management') team_type = 'review management team';
+            else if (sc === 'gbp_record_management') team_type = 'gbp record management team';
+            else if (sc === 'social_media_management') team_type = 'social media team';
+            else if (sc === 'jd_management') team_type = 'jd team';
+            else if (sc === 'leads_management') team_type = 'leads management team';
+            else if (sc === 'web_dev_management') team_type = 'it development team';
+        } else {
+            team_type = 'all';
+        }
+
         const updatedUser = await User.findOneAndUpdate(
             filter,
-            { $set: { scopes: scopes } },
+            { $set: { scopes: scopes, team_type: team_type } },
             { returnDocument: 'after' }
         ).select('-__v -password_hash').lean();
 
@@ -468,6 +489,131 @@ const assignScopesToUser = async (req, res) => {
     }
 };
 
+// assign team type to user (admin/super_admin)
+const assignTeamTypeToUser = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { team_type } = req.body;
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ error: 'Invalid user ID' });
+        }
+
+        const validTeamTypes = [
+            'social media team',
+            'jd team',
+            'review management team',
+            'gbp record management team',
+            'leads management team',
+            'it development team',
+            'all'
+        ];
+
+        if (!validTeamTypes.includes(team_type)) {
+            return res.status(400).json({ error: 'Invalid team type' });
+        }
+
+        let filter = { _id: id };
+        if (req.user.role === 'admin') {
+            filter.managed_by = req.user.id || req.user._id;
+        }
+
+        // Automatically map team type to corresponding scopes
+        let scopes = [];
+        if (team_type === 'review management team') {
+            scopes = ['review_management'];
+        } else if (team_type === 'gbp record management team') {
+            scopes = ['gbp_record_management'];
+        } else if (team_type === 'social media team') {
+            scopes = ['social_media_management'];
+        } else if (team_type === 'jd team') {
+            scopes = ['jd_management'];
+        } else if (team_type === 'leads management team') {
+            scopes = ['leads_management'];
+        } else if (team_type === 'it development team') {
+            scopes = ['web_dev_management'];
+        } else if (team_type === 'all') {
+            scopes = ['review_management', 'gbp_record_management', 'social_media_management', 'jd_management', 'leads_management', 'web_dev_management'];
+        }
+
+        const updatedUser = await User.findOneAndUpdate(
+            filter,
+            { $set: { team_type: team_type, scopes: scopes } },
+            { returnDocument: 'after' }
+        ).select('-__v -password_hash').lean();
+
+        if (!updatedUser) {
+            return res.status(404).json({ error: 'User not found or access denied' });
+        }
+
+        return res.status(200).json({
+            message: 'Team type assigned successfully',
+            user: updatedUser
+        });
+
+    } catch (error) {
+        console.error('Assign Team Type Error:', error);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
+const globalSearch = async (req, res) => {
+    try {
+        const { q = '' } = req.query;
+        if (!q || !q.trim()) {
+            return res.status(200).json({ users: [], businesses: [] });
+        }
+
+        const queryStr = q.trim();
+
+        // 1. Search Users (Admins can only find their managed users, standard users cannot search users)
+        let users = [];
+        if (req.user.role === 'admin' || req.user.role === 'super_admin') {
+            let userFilter = {
+                is_deleted: false,
+                $or: [
+                    { username: { $regex: queryStr, $options: 'i' } },
+                    { email: { $regex: queryStr, $options: 'i' } }
+                ]
+            };
+            if (req.user.role === 'admin') {
+                userFilter.managed_by = req.user._id;
+            }
+
+            users = await User.find(userFilter)
+                .select('_id username email role scopes assigned_businesses')
+                .limit(5)
+                .lean();
+        }
+
+        // 2. Search Businesses (Standard users only search their assigned businesses)
+        let businessFilter = {
+            $or: [
+                { business_name: { $regex: queryStr, $options: 'i' } },
+                { location: { $regex: queryStr, $options: 'i' } },
+                { short_code: { $regex: queryStr, $options: 'i' } }
+            ]
+        };
+
+        if (req.user.role === 'user') {
+            const assignedIds = Array.isArray(req.user.assigned_businesses)
+                ? req.user.assigned_businesses
+                : [];
+            businessFilter._id = { $in: assignedIds };
+        }
+
+        const businesses = await Business.find(businessFilter)
+            .select('_id business_name location short_code business_link')
+            .limit(5)
+            .lean();
+
+        return res.status(200).json({ users, businesses });
+    } catch (error) {
+        console.error('Global Search Error:', error);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
 module.exports = {
     googleAuth,
     signup,
@@ -480,5 +626,7 @@ module.exports = {
     updateUserStatus,
     deleteUser,
     assignBusinessesToUser,
-    assignScopesToUser
+    assignScopesToUser,
+    assignTeamTypeToUser,
+    globalSearch
 }

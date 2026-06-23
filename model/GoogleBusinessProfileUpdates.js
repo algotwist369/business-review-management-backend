@@ -1,4 +1,6 @@
 const mongoose = require('mongoose');
+const messageSchema = require('./Message');
+const AssetsSchema = require('./Asset');
 
 const GoogleBusinessProfileUpdatesSchema = new mongoose.Schema({
     user_id: {
@@ -83,6 +85,16 @@ const GoogleBusinessProfileUpdatesSchema = new mongoose.Schema({
         type: String,
         trim: true,
     },
+
+    is_number_live: AssetsSchema,
+
+    is_whatsapp_live: AssetsSchema,
+
+    is_website_live: AssetsSchema,
+
+    is_email_live: AssetsSchema,
+
+    message: [messageSchema],
 
     updated_by: {
         type: mongoose.Schema.Types.ObjectId,

@@ -39,6 +39,13 @@ const businessSchema = new mongoose.Schema(
             default: true,
             index: true,
         },
+
+        // Show as NEW for first 7 days
+        is_new: {
+            type: Boolean,
+            default: true,
+            index: true,
+        },
     },
     {
         timestamps: true,

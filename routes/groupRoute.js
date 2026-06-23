@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 
 const authMiddleware = require('../middlewares/auth.middleware');
+const { requireScope } = require('../middlewares/scope.middleware');
 const {
     createGroup,
     getUserGroups,
@@ -12,12 +13,16 @@ const {
     deleteGroup,
 } = require('../controller/groupController');
 
-router.post('/', authMiddleware, createGroup);
-router.get('/', authMiddleware, getUserGroups);
-router.get('/:groupId/businesses', authMiddleware, getBusinessesInGroup);
-router.patch('/:groupId/add-business', authMiddleware, addBusinessToGroup);
-router.patch('/:groupId/remove-business', authMiddleware, removeBusinessFromGroup);
-router.patch('/:groupId', authMiddleware, updateGroupName);
-router.delete('/:groupId', authMiddleware, deleteGroup);
+// Apply auth and scope check to all routes
+router.use(authMiddleware);
+router.use(requireScope('review_management'));
+
+router.post('/', createGroup);
+router.get('/', getUserGroups);
+router.get('/:groupId/businesses', getBusinessesInGroup);
+router.patch('/:groupId/add-business', addBusinessToGroup);
+router.patch('/:groupId/remove-business', removeBusinessFromGroup);
+router.patch('/:groupId', updateGroupName);
+router.delete('/:groupId', deleteGroup);
 
 module.exports = router;

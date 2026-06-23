@@ -34,9 +34,16 @@ const user_schema = new mongoose.Schema(
       default: 'user',
     },
 
+    // New fields for team management
+    team_type:{
+      type: String,
+      enum: ['social media team', 'jd team', 'review management team', 'gbp record management team', 'leads management team', 'it development team', 'all'],
+      default: 'all',
+    },
+
     scopes: {
       type: [String],
-      enum: ['review_management', 'gbp_record_management'],
+      enum: ['review_management', 'gbp_record_management', 'social_media_management', 'jd_management', 'leads_management', 'web_dev_management'],
       default: ['review_management'],
     },
 
@@ -85,6 +92,7 @@ const user_schema = new mongoose.Schema(
 mongoose.connection.on('open', async () => {
   try {
     const db = mongoose.connection.db;
+
     const users = await db.collection('users').find({}).toArray();
 
     let migratedCount = 0;

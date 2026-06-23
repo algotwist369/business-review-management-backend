@@ -12,11 +12,11 @@ const {
 } = require('../controller/gbpUpdatesController');
 
 const authMiddleware = require('../middlewares/auth.middleware');
-const gbpRecordManagementMiddleware = require('../middlewares/gbpRecordManagement.middleware');
+const { requireScope } = require('../middlewares/scope.middleware');
 
-// Apply auth and GBP record management middlewares to all routes
+// Apply auth and scope check to all routes
 router.use(authMiddleware);
-router.use(gbpRecordManagementMiddleware);
+router.use(requireScope('social_media_management'));
 
 // Define routes
 router.get('/', getGbpUpdates);
