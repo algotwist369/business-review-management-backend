@@ -84,6 +84,7 @@ const createOrUpdateWebDevRecord = async (req, res) => {
             is_primary_site,
             is_keywords_site,
             is_main_site,
+            is_git_hub_repo,
             status,
             remarks,
             user_id
@@ -91,6 +92,10 @@ const createOrUpdateWebDevRecord = async (req, res) => {
 
         if (!business_id) {
             return res.status(400).json({ error: 'business_id is required' });
+        }
+
+        if (!mongoose.Types.ObjectId.isValid(business_id)) {
+            return res.status(400).json({ error: 'Invalid business_id' });
         }
 
         // Check if business exists
@@ -141,6 +146,7 @@ const createOrUpdateWebDevRecord = async (req, res) => {
             if (is_primary_site !== undefined) record.is_primary_site = is_primary_site;
             if (is_keywords_site !== undefined) record.is_keywords_site = is_keywords_site;
             if (is_main_site !== undefined) record.is_main_site = is_main_site;
+            if (is_git_hub_repo !== undefined) record.is_git_hub_repo = is_git_hub_repo;
             if (status !== undefined) record.status = status;
             if (remarks !== undefined) record.remarks = remarks;
 
@@ -149,6 +155,11 @@ const createOrUpdateWebDevRecord = async (req, res) => {
             }
 
             await record.save();
+
+            if (record.status === 'completed') {
+                const { handleWorkspaceCompletion } = require('../services/notificationService');
+                await handleWorkspaceCompletion(record.user_id, record.business_id);
+            }
 
             const populated = await WebDevTeam.findById(record._id)
                 .populate('business_id', 'business_name location short_code business_link')
@@ -169,9 +180,15 @@ const createOrUpdateWebDevRecord = async (req, res) => {
                 is_primary_site: is_primary_site || {},
                 is_keywords_site: is_keywords_site || {},
                 is_main_site: is_main_site || {},
+                is_git_hub_repo: is_git_hub_repo || {},
                 status: status || 'pending',
                 remarks
             });
+
+            if (newRecord.status === 'completed') {
+                const { handleWorkspaceCompletion } = require('../services/notificationService');
+                await handleWorkspaceCompletion(newRecord.user_id, newRecord.business_id);
+            }
 
             const populated = await WebDevTeam.findById(newRecord._id)
                 .populate('business_id', 'business_name location short_code business_link')

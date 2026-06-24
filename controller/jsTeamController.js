@@ -93,6 +93,10 @@ const createOrUpdateJsRecord = async (req, res) => {
             return res.status(400).json({ error: 'business_id is required' });
         }
 
+        if (!mongoose.Types.ObjectId.isValid(business_id)) {
+            return res.status(400).json({ error: 'Invalid business_id' });
+        }
+
         // Check if business exists
         const business = await Business.findById(business_id).lean();
         if (!business) {
@@ -150,6 +154,11 @@ const createOrUpdateJsRecord = async (req, res) => {
 
             await record.save();
 
+            if (record.status === 'completed') {
+                const { handleWorkspaceCompletion } = require('../services/notificationService');
+                await handleWorkspaceCompletion(record.user_id, record.business_id);
+            }
+
             const populated = await JustdialManagementTeam.findById(record._id)
                 .populate('business_id', 'business_name location short_code business_link')
                 .populate('user_id', 'username email')
@@ -172,6 +181,11 @@ const createOrUpdateJsRecord = async (req, res) => {
                 status: status || 'pending',
                 remarks
             });
+
+            if (newRecord.status === 'completed') {
+                const { handleWorkspaceCompletion } = require('../services/notificationService');
+                await handleWorkspaceCompletion(newRecord.user_id, newRecord.business_id);
+            }
 
             const populated = await JustdialManagementTeam.findById(newRecord._id)
                 .populate('business_id', 'business_name location short_code business_link')

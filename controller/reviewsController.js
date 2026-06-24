@@ -160,6 +160,9 @@ const addReview = async (req, res) => {
             review_link,
         });
 
+        const { handleWorkspaceCompletion } = require('../services/notificationService');
+        handleWorkspaceCompletion(req.user._id, business_id);
+
         return res.status(201).json(review);
 
     } catch (error) {
@@ -205,6 +208,9 @@ const editReview = async (req, res) => {
         if (!updated) {
             return res.status(404).json({ error: 'Review not found' });
         }
+
+        const { handleWorkspaceCompletion } = require('../services/notificationService');
+        handleWorkspaceCompletion(updated.user_id, updated.business_id);
 
         return res.status(200).json(updated);
 

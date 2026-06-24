@@ -1,8 +1,13 @@
 const cron = require('node-cron');
 const Business = require('../model/Business');
+const { sendPendingWorkAlerts } = require('../services/notificationService');
 
-const updateBusinessStatus = async () => {
+const runDailyJobs = async () => {
     try {
+        // 1. Run pending work alerts (for businesses >= 5 days old but still is_new: true)
+        await sendPendingWorkAlerts();
+
+        // 2. Set is_new to false for businesses >= 7 days old
         const result = await Business.updateMany(
             {
                 is_new: true,
@@ -18,16 +23,16 @@ const updateBusinessStatus = async () => {
         );
         console.log(`[Job] Business status updated. Modified: ${result.modifiedCount}`);
     } catch (error) {
-        console.error('[Job Error] Failed to update business new status:', error);
+        console.error('[Job Error] Failed to run daily jobs:', error);
     }
 };
 
 const startBusinessNewStatusJob = () => {
     // Run once immediately on startup
-    updateBusinessStatus();
+    runDailyJobs();
 
     // Schedule to run daily at midnight
-    cron.schedule('0 0 * * *', updateBusinessStatus);
+    cron.schedule('0 0 * * *', runDailyJobs);
 };
 
 module.exports = startBusinessNewStatusJob;

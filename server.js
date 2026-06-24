@@ -5,7 +5,9 @@ const process = require('process');
 
 const numCPUs = os.cpus().length;
 
-if (cluster.isPrimary) {
+const useCluster = process.env.NODE_ENV === 'production' && process.env.ENABLE_CLUSTER === 'true';
+
+if (cluster.isPrimary && useCluster) {
     console.log(`Primary process ${process.pid} is running`);
     console.log(`Forking ${numCPUs} workers...\n`);
 
@@ -94,6 +96,8 @@ if (cluster.isPrimary) {
     app.use('/api/web-dev', require('./routes/webDevRoute'));
     app.use('/api/leads-management', require('./routes/leadsRoute'));
     app.use('/api/google-ads', require('./routes/googleAdsRoute'));
+    app.use('/api/notifications', require('./routes/notificationRoute'));
+    app.use('/api/chat', require('./routes/chatRoute'));
 
 
     // ==========================
@@ -124,6 +128,9 @@ if (cluster.isPrimary) {
     const server = app.listen(PORT, () => {
         console.log(`Worker ${process.pid} running on port ${PORT}`);
     });
+
+    const { initSocket } = require('./services/socketService');
+    initSocket(server);
 
 
     // ==========================

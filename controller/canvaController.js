@@ -82,6 +82,10 @@ const createOrUpdateCanvaRecord = async (req, res) => {
             return res.status(400).json({ error: 'business_id is required' });
         }
 
+        if (!mongoose.Types.ObjectId.isValid(business_id)) {
+            return res.status(400).json({ error: 'Invalid business_id' });
+        }
+
         // Check if business exists
         const business = await Business.findById(business_id).lean();
         if (!business) {

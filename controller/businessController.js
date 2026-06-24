@@ -65,9 +65,13 @@ const getAllBusiness = async (req, res) => {
             business_link = '', 
             is_active, 
             has_link,
-            sortBy = 'createdAt', 
-            sortOrder = 'desc' 
+            sortBy: rawSortBy = 'createdAt', 
+            sortOrder: rawSortOrder = 'desc' 
         } = req.query;
+
+        const allowedSortFields = ['business_name', 'location', 'short_code', 'business_link', 'is_active', 'createdAt', 'updatedAt', 'business_link_presence'];
+        const sortBy = allowedSortFields.includes(rawSortBy) ? rawSortBy : 'createdAt';
+        const sortOrder = ['asc', 'desc'].includes(rawSortOrder) ? rawSortOrder : 'desc';
         const skip = (Number(page) - 1) * Number(limit);
 
         // Filter: Admin/Super Admin sees all, users only see assigned & active

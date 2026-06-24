@@ -40,6 +40,10 @@ const createGbpUpdate = async (req, res) => {
             return res.status(400).json({ error: 'business_id and month are required' });
         }
 
+        if (!mongoose.Types.ObjectId.isValid(business_id)) {
+            return res.status(400).json({ error: 'Invalid business_id' });
+        }
+
         if (!validateMonth(month)) {
             return res.status(400).json({ error: 'month must be in YYYY-MM format' });
         }
@@ -128,6 +132,11 @@ const createGbpUpdate = async (req, res) => {
 
             await record.save();
 
+            if (record.status === 'completed') {
+                const { handleWorkspaceCompletion } = require('../services/notificationService');
+                await handleWorkspaceCompletion(record.user_id, record.business_id);
+            }
+
             const populated = await GoogleBusinessProfileUpdates.findById(record._id)
                 .populate('business_id', 'business_name location short_code business_link')
                 .populate('user_id', 'username email')
@@ -159,6 +168,11 @@ const createGbpUpdate = async (req, res) => {
                 is_email_live: is_email_live || {},
                 updated_by: req.user._id
             });
+
+            if (newRecord.status === 'completed') {
+                const { handleWorkspaceCompletion } = require('../services/notificationService');
+                await handleWorkspaceCompletion(newRecord.user_id, newRecord.business_id);
+            }
 
             const populated = await GoogleBusinessProfileUpdates.findById(newRecord._id)
                 .populate('business_id', 'business_name location short_code business_link')
@@ -274,6 +288,11 @@ const updateGbpUpdate = async (req, res) => {
         record.updated_by = req.user._id;
 
         await record.save();
+
+        if (record.status === 'completed') {
+            const { handleWorkspaceCompletion } = require('../services/notificationService');
+            await handleWorkspaceCompletion(record.user_id, record.business_id);
+        }
 
         const populated = await GoogleBusinessProfileUpdates.findById(record._id)
             .populate('business_id', 'business_name location short_code business_link')

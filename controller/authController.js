@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const User = require('../model/user');
 const Reviews = require('../model/review');
 const Business = require('../model/Business');
+const Notification = require('../model/Notification');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'secret';
 const JWT_EXPIRES = '7d';
@@ -232,7 +233,19 @@ const getAllUsers = async (req, res) => {
         }
 
         if (team_type && team_type !== 'all') {
-            filter.team_type = { $in: [team_type, 'all'] };
+            let scope;
+            if (team_type === 'review management team') scope = 'review_management';
+            else if (team_type === 'social media team') scope = 'social_media_management';
+            else if (team_type === 'gbp record management team') scope = 'gbp_record_management';
+            else if (team_type === 'jd team') scope = 'jd_management';
+            else if (team_type === 'it development team') scope = 'web_dev_management';
+            else if (team_type === 'leads management team') scope = 'leads_management';
+
+            if (scope) {
+                filter.scopes = scope;
+            } else {
+                filter.team_type = team_type;
+            }
         }
 
         if (req.user.role === 'admin') {
@@ -382,6 +395,8 @@ const deleteUser = async (req, res) => {
     }
 };
 
+
+
 // assign businesses to user (admin/super_admin)
 const assignBusinessesToUser = async (req, res) => {
     try {
@@ -407,14 +422,48 @@ const assignBusinessesToUser = async (req, res) => {
             filter.managed_by = req.user.id || req.user._id;
         }
 
+        // Fetch current user assignments to detect new additions
+        const existingUser = await User.findOne(filter).select('assigned_businesses').lean();
+        if (!existingUser) {
+            return res.status(404).json({ error: 'User not found or access denied' });
+        }
+
+        const prevBusinesses = (existingUser.assigned_businesses || []).map(b => b.toString());
+        const newlyAdded = businessIds.filter(bid => !prevBusinesses.includes(bid.toString()));
+
         const updatedUser = await User.findOneAndUpdate(
             filter,
             { $set: { assigned_businesses: businessIds } },
             { returnDocument: 'after' }
         ).select('-__v -password_hash').lean();
 
-        if (!updatedUser) {
-            return res.status(404).json({ error: 'User not found or access denied' });
+        // Check for new business assignments to trigger alerts
+        if (newlyAdded.length > 0) {
+            const newAssignedNewBusinesses = await Business.find({
+                _id: { $in: newlyAdded },
+                is_new: true
+            }).lean();
+
+            for (const biz of newAssignedNewBusinesses) {
+                // Create Notification in DB
+                const notification = await Notification.create({
+                    user_id: id,
+                    title: 'New Business Assigned',
+                    message: `You have been assigned to a new business: ${biz.business_name}. Please complete all workspace tasks within the 7-day introductory period.`,
+                    type: 'assignment',
+                    business_id: biz._id,
+                    triggered_by_user_id: req.user.id || req.user._id
+                });
+
+                // Populate and emit real-time alert via socketService
+                const populatedNotification = await Notification.findById(notification._id)
+                    .populate('triggered_by_user_id', 'username email')
+                    .populate('business_id', 'business_name location')
+                    .lean();
+
+                const { sendNotification } = require('../services/socketService');
+                sendNotification(id, populatedNotification);
+            }
         }
 
         return res.status(200).json({

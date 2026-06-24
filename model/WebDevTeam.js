@@ -31,16 +31,18 @@ const WebDevTeamSchema = new mongoose.Schema({
         default: null,
     },
 
-    is_website_live: AssetSchema,
-
     is_domain_registered: AssetSchema,
-
+    
+    is_website_live: AssetSchema,
+    
     is_primary_site: AssetSchema,
 
     is_keywords_site: AssetSchema,
 
     is_main_site: AssetSchema,
 
+    is_git_hub_repo: AssetSchema,
+    
     message: [MessageSchema],
 
 }, { timestamps: true });
