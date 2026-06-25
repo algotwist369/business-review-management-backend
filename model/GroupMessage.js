@@ -23,7 +23,27 @@ const GroupMessageSchema = new mongoose.Schema({
         enum: ['Low', 'Medium', 'High'],
         default: 'Medium',
         index: true
-    }
+    },
+    parent_message_id: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'GroupMessage',
+        default: null,
+        index: true
+    },
+    is_edited: {
+        type: Boolean,
+        default: false
+    },
+    is_deleted: {
+        type: Boolean,
+        default: false,
+        index: true
+    },
+    seen_by: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        index: true
+    }]
 }, { timestamps: true });
 
 // TTL index to automatically delete group messages after 24 hours (86400 seconds)

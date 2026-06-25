@@ -207,6 +207,58 @@ const sendGroupDeleted = (memberIds, groupId) => {
     });
 };
 
+// Emit real-time message updates (edits/deletions) to a specific user
+const sendChatMessageUpdate = (recipientId, chatMessage) => {
+    if (!ioInstance) return;
+    const recipientIdStr = recipientId.toString();
+    const activeSockets = userConnections.get(recipientIdStr);
+    if (activeSockets && activeSockets.length > 0) {
+        activeSockets.forEach(socketId => {
+            ioInstance.to(socketId).emit('chat_message_updated', chatMessage);
+        });
+    }
+};
+
+// Emit real-time group message updates (edits/deletions) to all group members
+const sendGroupChatMessageUpdate = (memberIds, groupMessage) => {
+    if (!ioInstance) return;
+    memberIds.forEach(memberId => {
+        const memberIdStr = memberId.toString();
+        const activeSockets = userConnections.get(memberIdStr);
+        if (activeSockets && activeSockets.length > 0) {
+            activeSockets.forEach(socketId => {
+                ioInstance.to(socketId).emit('group_message_updated', groupMessage);
+            });
+        }
+    });
+};
+
+// Emit real-time read receipt event to a specific user (contactId)
+const sendMessagesRead = (recipientId, senderId) => {
+    if (!ioInstance) return;
+    const recipientIdStr = recipientId.toString();
+    const activeSockets = userConnections.get(recipientIdStr);
+    if (activeSockets && activeSockets.length > 0) {
+        activeSockets.forEach(socketId => {
+            ioInstance.to(socketId).emit('messages_read', { senderId });
+        });
+    }
+};
+
+// Emit real-time read receipt event for group messages to all members
+const sendGroupMessagesRead = (memberIds, groupId, userId) => {
+    if (!ioInstance) return;
+    memberIds.forEach(memberId => {
+        const memberIdStr = memberId.toString();
+        const activeSockets = userConnections.get(memberIdStr);
+        if (activeSockets && activeSockets.length > 0) {
+            activeSockets.forEach(socketId => {
+                ioInstance.to(socketId).emit('group_messages_read', { groupId, userId });
+            });
+        }
+    });
+};
+
 module.exports = {
     initSocket,
     sendNotification,
@@ -216,4 +268,8 @@ module.exports = {
     sendGroupCreated,
     sendGroupUpdated,
     sendGroupDeleted,
+    sendChatMessageUpdate,
+    sendGroupChatMessageUpdate,
+    sendMessagesRead,
+    sendGroupMessagesRead,
 };

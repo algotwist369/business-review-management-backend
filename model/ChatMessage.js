@@ -33,6 +33,24 @@ const ChatMessageSchema = new mongoose.Schema({
         default: false,
         index: true,
     },
+
+    parent_message_id: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'ChatMessage',
+        default: null,
+        index: true,
+    },
+
+    is_edited: {
+        type: Boolean,
+        default: false,
+    },
+
+    is_deleted: {
+        type: Boolean,
+        default: false,
+        index: true,
+    },
 }, { timestamps: true });
 
 // Compound index for fast retrieval of historical conversations between two users

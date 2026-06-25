@@ -156,6 +156,10 @@ const getMessages = async (req, res) => {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(Number(limit))
+        .populate({
+            path: 'parent_message_id',
+            populate: { path: 'sender_id', select: 'username' }
+        })
         .lean();
 
         // Return reversed to maintain chronological order in feed
@@ -169,7 +173,7 @@ const getMessages = async (req, res) => {
 // Send a secure messaging dispatch
 const sendMessage = async (req, res) => {
     try {
-        const { recipient_id, text, priority = 'Medium' } = req.body;
+        const { recipient_id, text, priority = 'Medium', parent_message_id = null } = req.body;
 
         if (!recipient_id || !text) {
             return res.status(400).json({ error: 'recipient_id and text are required' });
@@ -186,6 +190,10 @@ const sendMessage = async (req, res) => {
 
         if (!mongoose.Types.ObjectId.isValid(recipient_id)) {
             return res.status(400).json({ error: 'Invalid recipient ID' });
+        }
+
+        if (parent_message_id && !mongoose.Types.ObjectId.isValid(parent_message_id)) {
+            return res.status(400).json({ error: 'Invalid parent message ID' });
         }
 
         if (recipient_id.toString() === req.user._id.toString()) {
@@ -207,11 +215,16 @@ const sendMessage = async (req, res) => {
             sender_id: req.user._id,
             recipient_id,
             text: cleanText,
-            priority
+            priority,
+            parent_message_id: parent_message_id || null
         });
 
         const populated = await ChatMessage.findById(message._id)
             .populate('sender_id', 'username email role')
+            .populate({
+                path: 'parent_message_id',
+                populate: { path: 'sender_id', select: 'username' }
+            })
             .lean();
 
         // WebSocket instant broadcast (non-blocking dispatch)
@@ -244,6 +257,10 @@ const markChatAsRead = async (req, res) => {
             { sender_id: contactId, recipient_id: userId, is_read: false },
             { $set: { is_read: true } }
         );
+
+        // Broadcast read event to the original sender
+        const { sendMessagesRead } = require('../services/socketService');
+        sendMessagesRead(contactId, userId);
 
         return res.status(200).json({
             message: 'Chat history marked as read',
@@ -450,6 +467,10 @@ const getGroupMessages = async (req, res) => {
             .skip(skip)
             .limit(Number(limit))
             .populate('sender_id', 'username email role')
+            .populate({
+                path: 'parent_message_id',
+                populate: { path: 'sender_id', select: 'username' }
+            })
             .lean();
 
         return res.status(200).json(messages.reverse());
@@ -462,7 +483,7 @@ const getGroupMessages = async (req, res) => {
 // Send a message to a group chat
 const sendGroupMessage = async (req, res) => {
     try {
-        const { group_id, text, priority = 'Medium' } = req.body;
+        const { group_id, text, priority = 'Medium', parent_message_id = null } = req.body;
         const senderId = req.user._id;
 
         if (!group_id || !text) {
@@ -480,6 +501,10 @@ const sendGroupMessage = async (req, res) => {
 
         if (!mongoose.Types.ObjectId.isValid(group_id)) {
             return res.status(400).json({ error: 'Invalid group ID' });
+        }
+
+        if (parent_message_id && !mongoose.Types.ObjectId.isValid(parent_message_id)) {
+            return res.status(400).json({ error: 'Invalid parent message ID' });
         }
 
         if (!['Low', 'Medium', 'High'].includes(priority)) {
@@ -502,11 +527,17 @@ const sendGroupMessage = async (req, res) => {
             group_id,
             sender_id: senderId,
             text: cleanText,
-            priority
+            priority,
+            parent_message_id: parent_message_id || null,
+            seen_by: [senderId]
         });
 
         const populated = await GroupMessage.findById(message._id)
             .populate('sender_id', 'username email role')
+            .populate({
+                path: 'parent_message_id',
+                populate: { path: 'sender_id', select: 'username' }
+            })
             .lean();
 
         // Broadcast to all group members (non-blocking)
@@ -664,6 +695,258 @@ const deleteGroup = async (req, res) => {
     }
 };
 
+// Edit a direct message
+const editMessage = async (req, res) => {
+    try {
+        const { messageId } = req.params;
+        const { text } = req.body;
+        const userId = req.user._id;
+
+        if (!mongoose.Types.ObjectId.isValid(messageId)) {
+            return res.status(400).json({ error: 'Invalid message ID' });
+        }
+
+        if (!text || !text.trim()) {
+            return res.status(400).json({ error: 'Message text is required' });
+        }
+
+        const cleanText = text.trim();
+        if (cleanText.length > 2000) {
+            return res.status(400).json({ error: 'Message text cannot exceed 2000 characters' });
+        }
+
+        const message = await ChatMessage.findById(messageId);
+        if (!message) {
+            return res.status(404).json({ error: 'Message not found' });
+        }
+
+        if (message.sender_id.toString() !== userId.toString()) {
+            return res.status(403).json({ error: 'Access denied: You can only edit your own messages' });
+        }
+
+        if (message.is_deleted) {
+            return res.status(400).json({ error: 'Cannot edit a deleted message' });
+        }
+
+        message.text = cleanText;
+        message.is_edited = true;
+        await message.save();
+
+        const populated = await ChatMessage.findById(messageId)
+            .populate('sender_id', 'username email role')
+            .populate({
+                path: 'parent_message_id',
+                populate: { path: 'sender_id', select: 'username' }
+            })
+            .lean();
+
+        // Broadcast update via WebSockets to recipient
+        const { sendChatMessageUpdate } = require('../services/socketService');
+        sendChatMessageUpdate(message.recipient_id, populated);
+
+        return res.status(200).json(populated);
+    } catch (error) {
+        console.error('[Chat Controller] editMessage error:', error);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
+// Soft delete a direct message
+const deleteMessage = async (req, res) => {
+    try {
+        const { messageId } = req.params;
+        const userId = req.user._id;
+
+        if (!mongoose.Types.ObjectId.isValid(messageId)) {
+            return res.status(400).json({ error: 'Invalid message ID' });
+        }
+
+        const message = await ChatMessage.findById(messageId);
+        if (!message) {
+            return res.status(404).json({ error: 'Message not found' });
+        }
+
+        if (message.sender_id.toString() !== userId.toString()) {
+            return res.status(403).json({ error: 'Access denied: You can only delete your own messages' });
+        }
+
+        if (message.is_deleted) {
+            return res.status(400).json({ error: 'Message is already deleted' });
+        }
+
+        // Soft delete: clear sensitive text content in database
+        message.text = 'This message was deleted';
+        message.is_deleted = true;
+        await message.save();
+
+        const populated = await ChatMessage.findById(messageId)
+            .populate('sender_id', 'username email role')
+            .populate({
+                path: 'parent_message_id',
+                populate: { path: 'sender_id', select: 'username' }
+            })
+            .lean();
+
+        // Broadcast delete update to recipient
+        const { sendChatMessageUpdate } = require('../services/socketService');
+        sendChatMessageUpdate(message.recipient_id, populated);
+
+        return res.status(200).json(populated);
+    } catch (error) {
+        console.error('[Chat Controller] deleteMessage error:', error);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
+// Edit a group message
+const editGroupMessage = async (req, res) => {
+    try {
+        const { messageId } = req.params;
+        const { text } = req.body;
+        const userId = req.user._id;
+
+        if (!mongoose.Types.ObjectId.isValid(messageId)) {
+            return res.status(400).json({ error: 'Invalid message ID' });
+        }
+
+        if (!text || !text.trim()) {
+            return res.status(400).json({ error: 'Message text is required' });
+        }
+
+        const cleanText = text.trim();
+        if (cleanText.length > 2000) {
+            return res.status(400).json({ error: 'Message text cannot exceed 2000 characters' });
+        }
+
+        const message = await GroupMessage.findById(messageId);
+        if (!message) {
+            return res.status(404).json({ error: 'Message not found' });
+        }
+
+        if (message.sender_id.toString() !== userId.toString()) {
+            return res.status(403).json({ error: 'Access denied: You can only edit your own messages' });
+        }
+
+        if (message.is_deleted) {
+            return res.status(400).json({ error: 'Cannot edit a deleted message' });
+        }
+
+        message.text = cleanText;
+        message.is_edited = true;
+        await message.save();
+
+        const populated = await GroupMessage.findById(messageId)
+            .populate('sender_id', 'username email role')
+            .populate({
+                path: 'parent_message_id',
+                populate: { path: 'sender_id', select: 'username' }
+            })
+            .lean();
+
+        // Broadcast to all group members
+        const group = await ChatGroup.findById(message.group_id).lean();
+        if (group) {
+            const { sendGroupChatMessageUpdate } = require('../services/socketService');
+            sendGroupChatMessageUpdate(group.members, populated);
+        }
+
+        return res.status(200).json(populated);
+    } catch (error) {
+        console.error('[Chat Controller] editGroupMessage error:', error);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
+// Soft delete a group message
+const deleteGroupMessage = async (req, res) => {
+    try {
+        const { messageId } = req.params;
+        const userId = req.user._id;
+
+        if (!mongoose.Types.ObjectId.isValid(messageId)) {
+            return res.status(400).json({ error: 'Invalid message ID' });
+        }
+
+        const message = await GroupMessage.findById(messageId);
+        if (!message) {
+            return res.status(404).json({ error: 'Message not found' });
+        }
+
+        if (message.sender_id.toString() !== userId.toString()) {
+            return res.status(403).json({ error: 'Access denied: You can only delete your own messages' });
+        }
+
+        if (message.is_deleted) {
+            return res.status(400).json({ error: 'Message is already deleted' });
+        }
+
+        // Soft delete: clear sensitive text content in database
+        message.text = 'This message was deleted';
+        message.is_deleted = true;
+        await message.save();
+
+        const populated = await GroupMessage.findById(messageId)
+            .populate('sender_id', 'username email role')
+            .populate({
+                path: 'parent_message_id',
+                populate: { path: 'sender_id', select: 'username' }
+            })
+            .lean();
+
+        // Broadcast delete update to all members
+        const group = await ChatGroup.findById(message.group_id).lean();
+        if (group) {
+            const { sendGroupChatMessageUpdate } = require('../services/socketService');
+            sendGroupChatMessageUpdate(group.members, populated);
+        }
+
+        return res.status(200).json(populated);
+    } catch (error) {
+        console.error('[Chat Controller] deleteGroupMessage error:', error);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
+// Mark all messages in a group chat as read/seen by the current user
+const markGroupChatAsRead = async (req, res) => {
+    try {
+        const { groupId } = req.params;
+        const userId = req.user._id;
+
+        if (!mongoose.Types.ObjectId.isValid(groupId)) {
+            return res.status(400).json({ error: 'Invalid group ID' });
+        }
+
+        const group = await ChatGroup.findById(groupId).lean();
+        if (!group) {
+            return res.status(404).json({ error: 'Group not found' });
+        }
+
+        const isMember = group.members.some(id => id.toString() === userId.toString());
+        if (!isMember) {
+            return res.status(403).json({ error: 'Access denied: You are not a member of this group' });
+        }
+
+        // Add userId to seen_by for all messages in the group where it's not already present
+        const result = await GroupMessage.updateMany(
+            { group_id: groupId, seen_by: { $ne: userId } },
+            { $addToSet: { seen_by: userId } }
+        );
+
+        // Broadcast to group members that this user has seen the messages
+        const { sendGroupMessagesRead } = require('../services/socketService');
+        sendGroupMessagesRead(group.members, groupId, userId);
+
+        return res.status(200).json({
+            message: 'Group chat history marked as read',
+            modifiedCount: result.modifiedCount
+        });
+    } catch (error) {
+        console.error('[Chat Controller] markGroupChatAsRead error:', error);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
 module.exports = {
     getContacts,
     getMessages,
@@ -675,5 +958,10 @@ module.exports = {
     getGroupMessages,
     sendGroupMessage,
     editGroup,
-    deleteGroup
+    deleteGroup,
+    editMessage,
+    deleteMessage,
+    editGroupMessage,
+    deleteGroupMessage,
+    markGroupChatAsRead
 };
