@@ -35,11 +35,13 @@ const WebDevTeamSchema = new mongoose.Schema({
     
     is_website_live: AssetSchema,
     
-    is_primary_site: AssetSchema,
-
     is_keywords_site: AssetSchema,
-
+    
     is_main_site: AssetSchema,
+    
+    is_adsvert_site: AssetSchema,
+    
+    technology_stack: AssetSchema,
 
     is_git_hub_repo: AssetSchema,
     

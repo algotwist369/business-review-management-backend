@@ -81,10 +81,11 @@ const createOrUpdateWebDevRecord = async (req, res) => {
             business_id,
             is_website_live,
             is_domain_registered,
-            is_primary_site,
+            is_adsvert_site,
             is_keywords_site,
             is_main_site,
             is_git_hub_repo,
+            technology_stack,
             status,
             remarks,
             user_id
@@ -143,10 +144,11 @@ const createOrUpdateWebDevRecord = async (req, res) => {
             // Update fields
             if (is_website_live !== undefined) record.is_website_live = is_website_live;
             if (is_domain_registered !== undefined) record.is_domain_registered = is_domain_registered;
-            if (is_primary_site !== undefined) record.is_primary_site = is_primary_site;
+            if (is_adsvert_site !== undefined) record.is_adsvert_site = is_adsvert_site;
             if (is_keywords_site !== undefined) record.is_keywords_site = is_keywords_site;
             if (is_main_site !== undefined) record.is_main_site = is_main_site;
             if (is_git_hub_repo !== undefined) record.is_git_hub_repo = is_git_hub_repo;
+            if (technology_stack !== undefined) record.technology_stack = technology_stack;
             if (status !== undefined) record.status = status;
             if (remarks !== undefined) record.remarks = remarks;
 
@@ -177,10 +179,11 @@ const createOrUpdateWebDevRecord = async (req, res) => {
                 business_id,
                 is_website_live: is_website_live || {},
                 is_domain_registered: is_domain_registered || {},
-                is_primary_site: is_primary_site || {},
+                is_adsvert_site: is_adsvert_site || {},
                 is_keywords_site: is_keywords_site || {},
                 is_main_site: is_main_site || {},
                 is_git_hub_repo: is_git_hub_repo || {},
+                technology_stack: technology_stack || {},
                 status: status || 'pending',
                 remarks
             });
