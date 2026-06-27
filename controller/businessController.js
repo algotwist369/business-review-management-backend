@@ -18,12 +18,12 @@ const addBusiness = async (req, res) => {
 
         // Check duplicate (lean = less memory)
         const existingBusiness = await Business.findOne({
-            $or: [{ short_code }],
+            short_code,
         }).lean();
 
         if (existingBusiness) {
             return res.status(400).json({
-                error: 'Business name or short code already exists',
+                error: 'Short code already exists',
             });
         }
 
@@ -51,6 +51,7 @@ const addBusiness = async (req, res) => {
         return res.status(500).json({ error: 'Internal Server Error' });
     }
 };
+
 // gett all business
 const getAllBusiness = async (req, res) => {
     try {
@@ -58,15 +59,15 @@ const getAllBusiness = async (req, res) => {
             return res.status(403).json({ error: 'Unauthorized access' });
         }
 
-        const { 
-            page = 1, 
-            limit = 10, 
-            search = '', 
-            business_link = '', 
-            is_active, 
+        const {
+            page = 1,
+            limit = 10,
+            search = '',
+            business_link = '',
+            is_active,
             has_link,
-            sortBy: rawSortBy = 'createdAt', 
-            sortOrder: rawSortOrder = 'desc' 
+            sortBy: rawSortBy = 'createdAt',
+            sortOrder: rawSortOrder = 'desc'
         } = req.query;
 
         const allowedSortFields = ['business_name', 'location', 'short_code', 'business_link', 'is_active', 'createdAt', 'updatedAt', 'business_link_presence'];
@@ -77,8 +78,8 @@ const getAllBusiness = async (req, res) => {
         // Filter: Admin/Super Admin sees all, users only see assigned & active
         let filter = {};
         if (req.user.role === 'user') {
-            const assignedIds = Array.isArray(req.user.assigned_businesses) 
-                ? req.user.assigned_businesses 
+            const assignedIds = Array.isArray(req.user.assigned_businesses)
+                ? req.user.assigned_businesses
                 : [];
             filter = {
                 _id: { $in: assignedIds },
