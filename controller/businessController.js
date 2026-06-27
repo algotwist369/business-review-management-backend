@@ -163,12 +163,56 @@ const editBusiness = async (req, res) => {
             return res.status(400).json({ error: 'Invalid business ID' });
         }
 
+        const allowedFields = [
+            'business_name',
+            'location',
+            'short_code',
+            'business_link',
+            'is_active',
+            'is_new',
+            'user_id',
+        ];
+
+        const updateData = {};
+
+        for (const field of allowedFields) {
+            if (req.body[field] !== undefined) {
+                updateData[field] = req.body[field];
+            }
+        }
+
+        if (!Object.keys(updateData).length) {
+            return res.status(400).json({ error: 'No update data provided' });
+        }
+
+        if (updateData.business_name) {
+            updateData.business_name = updateData.business_name.trim();
+        }
+
+        if (updateData.short_code) {
+            const shortCode = updateData.short_code.trim().toUpperCase();
+
+            const shortCodeExists = await Business.findOne({
+                short_code: shortCode,
+                _id: { $ne: id },
+            }).lean();
+
+            if (shortCodeExists) {
+                return res.status(400).json({
+                    error: 'Short code already exists',
+                });
+            }
+
+            updateData.short_code = shortCode;
+        }
+
         const updatedBusiness = await Business.findByIdAndUpdate(
             id,
-            { $set: req.body },
+            { $set: updateData },
             {
                 new: true,
                 runValidators: true,
+                context: 'query',
             }
         ).lean();
 
@@ -180,8 +224,17 @@ const editBusiness = async (req, res) => {
 
     } catch (error) {
         if (error.code === 11000) {
+            console.log('Duplicate Error Key Pattern:', error.keyPattern);
+            console.log('Duplicate Error Key Value:', error.keyValue);
+
+            const field = Object.keys(error.keyPattern || {})[0];
+
             return res.status(400).json({
-                error: 'Business name or short code already exists',
+                error: field === 'short_code'
+                    ? 'Short code already exists'
+                    : `${field || 'Field'} already exists`,
+                field,
+                value: error.keyValue?.[field],
             });
         }
 

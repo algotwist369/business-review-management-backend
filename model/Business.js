@@ -18,7 +18,6 @@ const businessSchema = new mongoose.Schema(
             type: String,
             trim: true,
             unique: true,
-            index: true,
         },
 
         business_link: {
