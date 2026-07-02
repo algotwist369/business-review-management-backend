@@ -4,13 +4,13 @@ const { sendPendingWorkAlerts } = require('../services/notificationService');
 
 const runDailyJobs = async () => {
     try {
-        // 1. Run pending work alerts (for businesses >= 5 days old but still is_new: true)
+        // 1. Run pending work alerts (for businesses >= 5 days old but still is_returnDocument: "after")
         await sendPendingWorkAlerts();
 
         // 2. Set is_new to false for businesses >= 7 days old
         const result = await Business.updateMany(
             {
-                is_new: true,
+                is_returnDocument: "after",
                 createdAt: {
                     $lte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // 7 days ago
                 },

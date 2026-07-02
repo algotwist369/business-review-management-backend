@@ -210,7 +210,7 @@ const editBusiness = async (req, res) => {
             id,
             { $set: updateData },
             {
-                new: true,
+                returnDocument: "after",
                 runValidators: true,
                 context: 'query',
             }
@@ -291,7 +291,7 @@ const updateBusinessStatus = async (req, res) => {
         const updated = await Business.findByIdAndUpdate(
             id,
             { $set: { is_active } },
-            { new: true }
+            { returnDocument: "after" }
         ).lean();
 
         if (!updated) {

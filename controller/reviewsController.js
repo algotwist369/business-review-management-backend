@@ -123,7 +123,7 @@ const updatePaymentSetting = async (req, res) => {
                     updated_by: req.user._id,
                 }
             },
-            { upsert: true, new: true, runValidators: true }
+            { upsert: true, returnDocument: "after", runValidators: true }
         ).lean();
 
         return res.status(200).json(setting);
@@ -207,7 +207,7 @@ const editReview = async (req, res) => {
         const updated = await Review.findByIdAndUpdate(
             id,
             { $set: updateData },
-            { new: true, runValidators: true }
+            { returnDocument: "after", runValidators: true }
         ).lean();
 
         if (!updated) {

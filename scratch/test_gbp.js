@@ -40,7 +40,7 @@ const runTests = async () => {
         const updatedUser = await User.findOneAndUpdate(
             { _id: testUser._id, managed_by: testAdmin._id },
             { $set: { scopes: ['review_management', 'gbp_record_management'] } },
-            { new: true }
+            { returnDocument: "after" }
         );
         if (!updatedUser.scopes.includes('gbp_record_management')) {
             throw new Error('Scope assignment failed');

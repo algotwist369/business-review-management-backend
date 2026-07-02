@@ -50,7 +50,7 @@ const runTest = async () => {
             business_name: 'Dummy Test Business Inc',
             location: 'Test City',
             short_code: 'DUMMYTEST',
-            is_new: true,
+            is_returnDocument: "after",
             user_id: dummyAdmin._id,
             createdAt: sixDaysAgo
         });

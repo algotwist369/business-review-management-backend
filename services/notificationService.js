@@ -150,7 +150,7 @@ const sendPendingWorkAlerts = async () => {
         
         // Find all businesses that are "new" and at least 5 days old
         const pendingBusinesses = await Business.find({
-            is_new: true,
+            is_returnDocument: "after",
             createdAt: { $lte: fiveDaysAgo }
         }).lean();
 

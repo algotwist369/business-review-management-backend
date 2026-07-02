@@ -104,7 +104,7 @@ const updateUserRole = async (req, res) => {
         const updatedUser = await User.findByIdAndUpdate(
             id,
             { role },
-            { new: true }
+            { returnDocument: "after" }
         ).select('-__v -password_hash').lean();
 
         if (!updatedUser) {

@@ -441,7 +441,7 @@ const assignBusinessesToUser = async (req, res) => {
         if (newlyAdded.length > 0) {
             const newAssignedNewBusinesses = await Business.find({
                 _id: { $in: newlyAdded },
-                is_new: true
+                is_returnDocument: "after"
             }).lean();
 
             for (const biz of newAssignedNewBusinesses) {

@@ -201,7 +201,7 @@ const updatePromptOption = async (req, res) => {
         const option = await ReviewPromptOption.findOneAndUpdate(
             { _id: id, type },
             { $set: updateData },
-            { new: true, runValidators: true }
+            { returnDocument: "after", runValidators: true }
         ).lean();
 
         if (!option) {
@@ -228,7 +228,7 @@ const deletePromptOption = async (req, res) => {
         const option = await ReviewPromptOption.findOneAndUpdate(
             { _id: id, type },
             { $set: { is_active: false, updated_by: req.user._id } },
-            { new: true }
+            { returnDocument: "after" }
         ).lean();
 
         if (!option) {
@@ -303,7 +303,7 @@ const updateDataset = async (req, res) => {
         const dataset = await ReviewDataset.findByIdAndUpdate(
             id,
             { $set: updateData },
-            { new: true, runValidators: true }
+            { returnDocument: "after", runValidators: true }
         ).lean();
 
         if (!dataset) {
@@ -327,7 +327,7 @@ const deleteDataset = async (req, res) => {
         const dataset = await ReviewDataset.findByIdAndUpdate(
             id,
             { $set: { is_active: false, updated_by: req.user._id } },
-            { new: true }
+            { returnDocument: "after" }
         ).lean();
 
         if (!dataset) {
@@ -405,7 +405,7 @@ const updateLanguage = async (req, res) => {
         const language = await ReviewLanguage.findByIdAndUpdate(
             id,
             { $set: updateData },
-            { new: true, runValidators: true }
+            { returnDocument: "after", runValidators: true }
         ).lean();
 
         if (!language) {
@@ -432,7 +432,7 @@ const deleteLanguage = async (req, res) => {
         const language = await ReviewLanguage.findByIdAndUpdate(
             id,
             { $set: { is_active: false, updated_by: req.user._id } },
-            { new: true }
+            { returnDocument: "after" }
         ).lean();
 
         if (!language) {
@@ -606,7 +606,7 @@ const saveFeedback = async (req, res) => {
                     feedback_at: new Date(),
                 },
             },
-            { new: true }
+            { returnDocument: "after" }
         ).lean();
 
         if (!generation) {
