@@ -46,8 +46,8 @@ const GroupMessageSchema = new mongoose.Schema({
     }]
 }, { timestamps: true });
 
-// TTL index to automatically delete group messages after 24 hours (86400 seconds)
-GroupMessageSchema.index({ createdAt: 1 }, { expireAfterSeconds: 86400 });
+// TTL index to automatically delete group messages after 1 month (2592000 seconds)
+GroupMessageSchema.index({ createdAt: 1 }, { expireAfterSeconds: 2592000 });
 
 // Index for fast group messages retrieval
 GroupMessageSchema.index({ group_id: 1, createdAt: 1 });

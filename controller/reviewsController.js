@@ -26,10 +26,15 @@ const canManageReview = async (user, review) => {
 };
 
 const buildDateRangePaymentQuery = async (user, startDate, endDate, userId) => {
+    // Set start date to 00:00:00 and end date to 23:59:59.999
+    const start = new Date(startDate);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(endDate);
+    end.setHours(23, 59, 59, 999);
     const query = {
         review_date: {
-            $gte: new Date(startDate),
-            $lte: new Date(endDate),
+            $gte: start,
+            $lte: end,
         },
     };
 
@@ -279,16 +284,27 @@ const getReviewsByUser = async (req, res) => {
         if (filterType === 'weekly') {
             const lastWeek = new Date();
             lastWeek.setDate(now.getDate() - 7);
-            dateMatch = { review_date: { $gte: lastWeek, $lte: now } };
+            // Set to start of last week (00:00:00) and end of now (23:59:59.999)
+            const startOfLastWeek = new Date(lastWeek.setHours(0, 0, 0, 0));
+            const endOfNow = new Date(now.setHours(23, 59, 59, 999));
+            dateMatch = { review_date: { $gte: startOfLastWeek, $lte: endOfNow } };
         } else if (filterType === 'monthly') {
             const lastMonth = new Date();
             lastMonth.setMonth(now.getMonth() - 1);
-            dateMatch = { review_date: { $gte: lastMonth, $lte: now } };
+            // Set to start of last month (00:00:00) and end of now (23:59:59.999)
+            const startOfLastMonth = new Date(lastMonth.setHours(0, 0, 0, 0));
+            const endOfNow = new Date(now.setHours(23, 59, 59, 999));
+            dateMatch = { review_date: { $gte: startOfLastMonth, $lte: endOfNow } };
         } else if (filterType === 'custom' && start && end) {
+            // Set start date to 00:00:00 and end date to 23:59:59.999
+            const startDate = new Date(start);
+            startDate.setHours(0, 0, 0, 0);
+            const endDate = new Date(end);
+            endDate.setHours(23, 59, 59, 999);
             dateMatch = {
                 review_date: {
-                    $gte: new Date(start),
-                    $lte: new Date(end)
+                    $gte: startDate,
+                    $lte: endDate
                 }
             };
         }

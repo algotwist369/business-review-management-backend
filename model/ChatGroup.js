@@ -23,7 +23,7 @@ const ChatGroupSchema = new mongoose.Schema({
 // Add indexes for member lookup
 ChatGroupSchema.index({ members: 1 });
 
-// TTL index to automatically delete group chat after 24 hours (86400 seconds)
-ChatGroupSchema.index({ createdAt: 1 }, { expireAfterSeconds: 86400 });
+// TTL index to automatically delete group chat after 1 month (2592000 seconds)
+ChatGroupSchema.index({ createdAt: 1 }, { expireAfterSeconds: 2592000 });
 
 module.exports = mongoose.model('ChatGroup', ChatGroupSchema);
