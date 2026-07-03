@@ -1,11 +1,12 @@
 const cron = require('node-cron');
 const Business = require('../model/Business');
-const { sendPendingWorkAlerts } = require('../services/notificationService');
+const { sendPendingWorkAlerts, sendGbpMaintenanceAlerts } = require('../services/notificationService');
 
 const runDailyJobs = async () => {
     try {
         // 1. Run pending work alerts (for businesses >= 5 days old but still is_returnDocument: "after")
         await sendPendingWorkAlerts();
+        await sendGbpMaintenanceAlerts();
 
         // 2. Set is_new to false for businesses >= 7 days old
         const result = await Business.updateMany(

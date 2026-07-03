@@ -4,17 +4,36 @@ const Notification = require('../model/Notification');
 const getNotifications = async (req, res) => {
     try {
         const userId = req.user._id;
+        const page = Math.max(Number(req.query.page) || 1, 1);
+        const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
+        const skip = (page - 1) * limit;
 
-        const notifications = await Notification.find({
+        const filter = {
             user_id: userId,
             is_cleared: false,
-        })
+        };
+
+        const [notifications, total, unread_total] = await Promise.all([
+            Notification.find(filter)
         .sort({ is_read: 1, createdAt: -1 })
+                .skip(skip)
+                .limit(limit)
         .populate('triggered_by_user_id', 'username email')
         .populate('business_id', 'business_name location')
-        .lean();
+                .lean(),
+            Notification.countDocuments(filter),
+            Notification.countDocuments({ ...filter, is_read: false })
+        ]);
 
-        return res.status(200).json(notifications);
+        return res.status(200).json({
+            total,
+            unread_total,
+            page,
+            limit,
+            has_more: skip + notifications.length < total,
+            next_page: skip + notifications.length < total ? page + 1 : null,
+            data: notifications
+        });
     } catch (error) {
         console.error('[Notification Controller] getNotifications error:', error);
         return res.status(500).json({ error: 'Internal Server Error' });

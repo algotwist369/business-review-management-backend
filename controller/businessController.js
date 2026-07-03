@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const Business = require('../model/Business');
+const User = require('../model/user');
 
 // add business
 const addBusiness = async (req, res) => {
@@ -130,11 +131,41 @@ const getAllBusiness = async (req, res) => {
             sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
         }
 
-        const businesses = await Business.find(filter)
+        let businesses = await Business.find(filter)
             .sort(sort)
             .skip(skip)
             .limit(Number(limit))
             .lean(); // low memory usage
+
+        if (req.user.role === 'admin' || req.user.role === 'super_admin') {
+            const businessIds = businesses.map(business => business._id);
+            const assignedUsers = await User.find({
+                role: 'user',
+                is_deleted: false,
+                assigned_businesses: { $in: businessIds },
+                ...(req.user.role === 'admin' ? { managed_by: req.user._id } : {})
+            })
+                .select('_id username email assigned_businesses')
+                .lean();
+
+            const usersByBusinessId = new Map();
+            assignedUsers.forEach(user => {
+                (user.assigned_businesses || []).forEach(businessId => {
+                    const key = businessId.toString();
+                    if (!usersByBusinessId.has(key)) usersByBusinessId.set(key, []);
+                    usersByBusinessId.get(key).push({
+                        _id: user._id,
+                        username: user.username,
+                        email: user.email
+                    });
+                });
+            });
+
+            businesses = businesses.map(business => ({
+                ...business,
+                assigned_users: usersByBusinessId.get(business._id.toString()) || []
+            }));
+        }
 
         const total = await Business.countDocuments(filter);
 

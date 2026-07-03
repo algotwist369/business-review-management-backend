@@ -13,6 +13,180 @@ const validateCount = (val) => {
     return Number.isInteger(Number(val)) && Number(val) >= 0;
 };
 
+const parseMonthBounds = (month) => {
+    const [year, monthNumber] = month.split('-').map(Number);
+    const start = new Date(year, monthNumber - 1, 1, 0, 0, 0, 0);
+    const end = new Date(year, monthNumber, 0, 23, 59, 59, 999);
+    return { start, end };
+};
+
+const overlapsMonth = (record, monthStart, monthEnd) => {
+    if (!record.post_start_date || !record.post_end_date) return false;
+    const start = new Date(record.post_start_date);
+    const end = new Date(record.post_end_date);
+    return start <= monthEnd && end >= monthStart;
+};
+
+const hasPositivePermanentCount = (record, field) => Number(record?.[field] || 0) > 0;
+
+const mergeEffectiveMonthlyRecords = (records, month) => {
+    if (!month) return records;
+
+    const { start: monthStart, end: monthEnd } = parseMonthBounds(month);
+    const grouped = new Map();
+
+    records.forEach(record => {
+        const userId = (record.user_id?._id || record.user_id)?.toString();
+        const businessId = (record.business_id?._id || record.business_id)?.toString();
+        if (!userId || !businessId) return;
+
+        const key = `${userId}:${businessId}`;
+        if (!grouped.has(key)) grouped.set(key, []);
+        grouped.get(key).push(record);
+    });
+
+    const effectiveRecords = [];
+
+    grouped.forEach(groupRecords => {
+        const sorted = groupRecords.sort((a, b) => {
+            if (a.month !== b.month) return b.month.localeCompare(a.month);
+            return new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0);
+        });
+
+        const exactRecord = sorted.find(record => record.month === month);
+        const postRecord = sorted.find(record => overlapsMonth(record, monthStart, monthEnd));
+        const baseRecord = exactRecord || postRecord || sorted[0];
+        if (!baseRecord) return;
+
+        const effective = { ...baseRecord };
+        effective.is_effective_month_view = true;
+        effective.effective_month = month;
+
+        ['product_count', 'service_count', 'media_count'].forEach(field => {
+            const countSource = sorted.find(record => record.month <= month && hasPositivePermanentCount(record, field));
+            if (countSource) {
+                effective[field] = countSource[field];
+                effective[`${field}_source_month`] = countSource.month;
+            }
+        });
+
+        if (postRecord) {
+            effective.post_start_date = postRecord.post_start_date;
+            effective.post_end_date = postRecord.post_end_date;
+            effective.scheduled_posts_count = postRecord.scheduled_posts_count || 0;
+            effective.update_link = postRecord.update_link;
+            effective.post_source_month = postRecord.month;
+        } else {
+            effective.post_start_date = null;
+            effective.post_end_date = null;
+            effective.scheduled_posts_count = 0;
+            effective.update_link = '';
+            effective.post_source_month = null;
+        }
+
+        effectiveRecords.push(effective);
+    });
+
+    return effectiveRecords;
+};
+
+const buildRoleFilter = async (req) => {
+    const filter = {};
+
+    if (req.user.role === 'user') {
+        const assignedIds = req.user.assigned_businesses || [];
+        filter.business_id = { $in: assignedIds };
+        filter.user_id = req.user._id;
+    } else if (req.user.role === 'admin') {
+        const managedUsers = await User.find({ managed_by: req.user._id, is_deleted: false }).select('_id').lean();
+        const userIds = [req.user._id, ...managedUsers.map(u => u._id)];
+        filter.user_id = { $in: userIds };
+    }
+
+    return filter;
+};
+
+const applyBusinessSearchFilter = async (filter, search) => {
+    if (!search) return filter;
+
+    const matchingBusinesses = await Business.find({
+        $or: [
+            { business_name: { $regex: search, $options: 'i' } },
+            { location: { $regex: search, $options: 'i' } },
+            { short_code: { $regex: search, $options: 'i' } }
+        ]
+    }).select('_id').lean();
+
+    const businessIds = matchingBusinesses.map(b => b._id);
+
+    if (filter.business_id?.$in) {
+        const allowedIds = filter.business_id.$in.map(id => id.toString());
+        filter.business_id = { $in: businessIds.filter(id => allowedIds.includes(id.toString())) };
+    } else {
+        filter.business_id = { $in: businessIds };
+    }
+
+    return filter;
+};
+
+const buildMonthAwareFilter = (filter, month) => {
+    if (!month) return filter;
+
+    const { start: monthStart, end: monthEnd } = parseMonthBounds(month);
+    return {
+        ...filter,
+        $or: [
+            { month: { $lte: month } },
+            {
+                post_start_date: { $lte: monthEnd },
+                post_end_date: { $gte: monthStart }
+            }
+        ]
+    };
+};
+
+const getLatestPermanentCounts = async (userId, businessId, month, excludeRecordId = null) => {
+    const query = {
+        user_id: userId,
+        business_id: businessId,
+        month: { $lte: month }
+    };
+
+    if (excludeRecordId) {
+        query._id = { $ne: excludeRecordId };
+    }
+
+    const records = await GoogleBusinessProfileUpdates.find(query)
+        .sort({ month: -1, updatedAt: -1 })
+        .select('month product_count service_count media_count')
+        .lean();
+
+    const counts = {};
+    ['product_count', 'service_count', 'media_count'].forEach(field => {
+        const source = records.find(record => hasPositivePermanentCount(record, field));
+        if (source) counts[field] = source[field];
+    });
+
+    return counts;
+};
+
+const preservePermanentCounts = (incomingCounts, fallbackCounts = {}) => {
+    const preserved = {};
+
+    ['product_count', 'service_count', 'media_count'].forEach(field => {
+        const incoming = incomingCounts[field];
+        const fallback = fallbackCounts[field];
+
+        if ((incoming === undefined || incoming === null || Number(incoming) === 0) && Number(fallback || 0) > 0) {
+            preserved[field] = fallback;
+        } else if (incoming !== undefined) {
+            preserved[field] = incoming;
+        }
+    });
+
+    return preserved;
+};
+
 // Create or update monthly record
 const createGbpUpdate = async (req, res) => {
     try {
@@ -93,6 +267,12 @@ const createGbpUpdate = async (req, res) => {
             targetUserId = user_id;
         }
 
+        const fallbackCounts = await getLatestPermanentCounts(targetUserId, business_id, month);
+        const preservedCounts = preservePermanentCounts(
+            { product_count, service_count, media_count },
+            fallbackCounts
+        );
+
         // Check if record already exists for this user + business + month
         let record = await GoogleBusinessProfileUpdates.findOne({ user_id: targetUserId, business_id, month });
 
@@ -109,9 +289,9 @@ const createGbpUpdate = async (req, res) => {
             }
 
             // Update fields
-            if (product_count !== undefined) record.product_count = product_count;
-            if (service_count !== undefined) record.service_count = service_count;
-            if (media_count !== undefined) record.media_count = media_count;
+            if (preservedCounts.product_count !== undefined) record.product_count = preservedCounts.product_count;
+            if (preservedCounts.service_count !== undefined) record.service_count = preservedCounts.service_count;
+            if (preservedCounts.media_count !== undefined) record.media_count = preservedCounts.media_count;
             if (post_start_date !== undefined) record.post_start_date = post_start_date ? new Date(post_start_date) : null;
             if (post_end_date !== undefined) record.post_end_date = post_end_date ? new Date(post_end_date) : null;
             if (scheduled_posts_count !== undefined) record.scheduled_posts_count = scheduled_posts_count;
@@ -153,9 +333,9 @@ const createGbpUpdate = async (req, res) => {
                 user_id: targetUserId,
                 business_id,
                 month,
-                product_count: product_count || 0,
-                service_count: service_count || 0,
-                media_count: media_count || 0,
+                product_count: preservedCounts.product_count || 0,
+                service_count: preservedCounts.service_count || 0,
+                media_count: preservedCounts.media_count || 0,
                 post_start_date: post_start_date ? new Date(post_start_date) : null,
                 post_end_date: post_end_date ? new Date(post_end_date) : null,
                 scheduled_posts_count: scheduled_posts_count || 0,
@@ -269,10 +449,16 @@ const updateGbpUpdate = async (req, res) => {
             record.user_id = user_id;
         }
 
+        const fallbackCounts = await getLatestPermanentCounts(record.user_id, record.business_id, record.month, record._id);
+        const preservedCounts = preservePermanentCounts(
+            { product_count, service_count, media_count },
+            fallbackCounts
+        );
+
         // Update fields
-        if (product_count !== undefined) record.product_count = product_count;
-        if (service_count !== undefined) record.service_count = service_count;
-        if (media_count !== undefined) record.media_count = media_count;
+        if (preservedCounts.product_count !== undefined) record.product_count = preservedCounts.product_count;
+        if (preservedCounts.service_count !== undefined) record.service_count = preservedCounts.service_count;
+        if (preservedCounts.media_count !== undefined) record.media_count = preservedCounts.media_count;
         if (post_start_date !== undefined) record.post_start_date = post_start_date ? new Date(post_start_date) : null;
         if (post_end_date !== undefined) record.post_end_date = post_end_date ? new Date(post_end_date) : null;
         if (scheduled_posts_count !== undefined) record.scheduled_posts_count = scheduled_posts_count;
@@ -327,58 +513,29 @@ const getGbpUpdates = async (req, res) => {
 
         const skip = (Number(page) - 1) * Number(limit);
 
-        let filter = {};
+        let filter = await buildRoleFilter(req);
+        filter = await applyBusinessSearchFilter(filter, search);
+        filter = buildMonthAwareFilter(filter, month);
 
-        if (month) {
-            filter.month = month;
-        }
-
-        if (status) {
-            filter.status = status;
-        }
-
-        // Role-based filters
-        if (req.user.role === 'user') {
-            const assignedIds = req.user.assigned_businesses || [];
-            filter.business_id = { $in: assignedIds };
-            filter.user_id = req.user._id;
-        } else if (req.user.role === 'admin') {
-            const managedUsers = await User.find({ managed_by: req.user._id, is_deleted: false }).select('_id').lean();
-            const userIds = [req.user._id, ...managedUsers.map(u => u._id)];
-            filter.user_id = { $in: userIds };
-        }
-
-        // Search businesses by name
-        if (search) {
-            const matchingBusinesses = await Business.find({
-                $or: [
-                    { business_name: { $regex: search, $options: 'i' } },
-                    { location: { $regex: search, $options: 'i' } },
-                    { short_code: { $regex: search, $options: 'i' } }
-                ]
-            }).select('_id').lean();
-
-            const businessIds = matchingBusinesses.map(b => b._id);
-            
-            if (filter.business_id) {
-                const userAssignedIdsStr = filter.business_id.$in.map(id => id.toString());
-                const matchingIds = businessIds.filter(id => userAssignedIdsStr.includes(id.toString()));
-                filter.business_id = { $in: matchingIds };
-            } else {
-                filter.business_id = { $in: businessIds };
-            }
-        }
-
-        const data = await GoogleBusinessProfileUpdates.find(filter)
+        const records = await GoogleBusinessProfileUpdates.find(filter)
             .populate('business_id', 'business_name location short_code business_link')
             .populate('user_id', 'username email')
             .populate('updated_by', 'username email')
             .sort({ month: -1, createdAt: -1 })
-            .skip(skip)
-            .limit(Number(limit))
             .lean();
 
-        const total = await GoogleBusinessProfileUpdates.countDocuments(filter);
+        let data = mergeEffectiveMonthlyRecords(records, month)
+            .sort((a, b) => {
+                if (a.month !== b.month) return b.month.localeCompare(a.month);
+                return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+            });
+
+        if (status) {
+            data = data.filter(record => (record.status || 'pending') === status);
+        }
+
+        const total = data.length;
+        data = data.slice(skip, skip + Number(limit));
 
         return res.status(200).json({
             total,
@@ -458,26 +615,18 @@ const getGbpUpdatesByBusiness = async (req, res) => {
             }
         }
 
-        let filter = { business_id: businessId };
-        if (req.user.role === 'user') {
-            filter.user_id = req.user._id;
-        }
-        if (month) {
-            filter.month = month;
-        }
+        let filter = await buildRoleFilter(req);
+        filter.business_id = businessId;
+        filter = buildMonthAwareFilter(filter, month);
 
-        if (req.user.role === 'admin') {
-            const managedUsers = await User.find({ managed_by: req.user._id, is_deleted: false }).select('_id').lean();
-            const userIds = [req.user._id, ...managedUsers.map(u => u._id)];
-            filter.user_id = { $in: userIds };
-        }
-
-        const data = await GoogleBusinessProfileUpdates.find(filter)
+        const records = await GoogleBusinessProfileUpdates.find(filter)
             .populate('business_id', 'business_name location short_code business_link')
             .populate('user_id', 'username email')
             .populate('updated_by', 'username email')
             .sort({ month: -1 })
             .lean();
+
+        const data = mergeEffectiveMonthlyRecords(records, month);
 
         return res.status(200).json(data);
 
@@ -500,19 +649,13 @@ const getGbpUpdatesSummary = async (req, res) => {
             return res.status(400).json({ error: 'month must be in YYYY-MM format' });
         }
 
-        let filter = { month };
+        let filter = await buildRoleFilter(req);
+        filter = buildMonthAwareFilter(filter, month);
 
-        if (req.user.role === 'user') {
-            const assignedIds = req.user.assigned_businesses || [];
-            filter.business_id = { $in: assignedIds };
-            filter.user_id = req.user._id;
-        } else if (req.user.role === 'admin') {
-            const managedUsers = await User.find({ managed_by: req.user._id, is_deleted: false }).select('_id').lean();
-            const userIds = [req.user._id, ...managedUsers.map(u => u._id)];
-            filter.user_id = { $in: userIds };
-        }
-
-        const records = await GoogleBusinessProfileUpdates.find(filter).lean();
+        const records = mergeEffectiveMonthlyRecords(
+            await GoogleBusinessProfileUpdates.find(filter).lean(),
+            month
+        );
 
         const summary = {
             total_records: records.length,

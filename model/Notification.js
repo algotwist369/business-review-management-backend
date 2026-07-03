@@ -22,7 +22,14 @@ const NotificationSchema = new mongoose.Schema({
 
     type: {
         type: String,
-        enum: ['assignment', 'pending_work', 'completed_work'],
+        enum: [
+            'assignment',
+            'pending_work',
+            'completed_work',
+            'gbp_post_expiring',
+            'gbp_post_expired',
+            'gbp_minimum_count_pending'
+        ],
         required: true,
     },
 
@@ -54,5 +61,6 @@ const NotificationSchema = new mongoose.Schema({
 
 // Auto-delete records older than 7 days (604800 seconds) using MongoDB TTL index
 NotificationSchema.index({ createdAt: 1 }, { expireAfterSeconds: 7 * 24 * 60 * 60 });
+NotificationSchema.index({ user_id: 1, is_cleared: 1, is_read: 1, createdAt: -1 });
 
 module.exports = mongoose.model('Notification', NotificationSchema);
