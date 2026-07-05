@@ -14,6 +14,7 @@ const {
     markAsUnpaidCustomDate,
     getReviewStats,
     getReviewsForBusiness,
+    verifyReview,
 } = require('../controller/reviewsController');
 
 const authMiddleware = require('../middlewares/auth.middleware');
@@ -39,5 +40,6 @@ router.post('/mark-as-paid/:id', adminMiddleware, markAsPaid);
 router.post('/mark-as-paid-custom-date', adminMiddleware, markAsPaidCustomDate);
 router.post('/mark-as-unpaid/:id', adminMiddleware, markAsUnpaid);
 router.post('/mark-as-unpaid-custom-date', adminMiddleware, markAsUnpaidCustomDate);
+router.post('/verify/:id', adminMiddleware, verifyReview);
 
 module.exports = router;

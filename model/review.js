@@ -55,6 +55,18 @@ const reviewSchema = new mongoose.Schema(
             default: 0,
             min: 0,
         },
+        // Admin/super admin can verify the review and mark it as verified
+        is_verified: {
+            type: Boolean,
+            default: false,
+        },
+        verified_at: {
+            type: Date,
+        },
+        verified_by: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'User',
+        },
     },
     {
         timestamps: true,
@@ -64,5 +76,5 @@ const reviewSchema = new mongoose.Schema(
 // Compound index for fast filtering
 reviewSchema.index({ user_id: 1, business_id: 1 });
 reviewSchema.index({ is_paid: 1 });
-
+reviewSchema.index({ is_verified: 1 });
 module.exports = mongoose.model('Review', reviewSchema);

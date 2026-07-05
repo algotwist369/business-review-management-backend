@@ -196,7 +196,14 @@ const editReview = async (req, res) => {
             return res.status(403).json({ error: 'Access denied' });
         }
 
-        const updateData = { review_count, review_link, review_date };
+        const updateData = {
+            review_count,
+            review_link,
+            review_date,
+            is_verified: false,
+            verified_at: null,
+            verified_by: null,
+        };
 
         // If it's a legacy paid review (is_paid: true but paid_review_count: 0),
         // we lock the current (old) count as the paid count so that this new edit shows an adjustment.
@@ -313,11 +320,12 @@ const getReviewsByUser = async (req, res) => {
 
         // Fetch paginated reviews
         const reviews = await Review.find(query)
-            .select('review_count review_link review_date business_id is_paid paid_at paid_review_count paid_review_price paid_amount updatedAt')
+            .select('review_count review_link review_date business_id is_paid paid_at paid_review_count paid_review_price paid_amount is_verified verified_at verified_by updatedAt')
             .populate({
                 path: 'business_id',
                 select: 'business_name short_code location business_link',
             })
+            .populate('verified_by', 'username email role')
             .sort({ review_date: -1 })
             .skip(skip)
             .limit(Number(limit))
@@ -455,6 +463,10 @@ const markAsPaid = async (req, res) => {
             return res.status(403).json({ error: 'Access denied' });
         }
 
+        if (!review.is_verified) {
+            return res.status(400).json({ error: 'Review must be verified before marking as paid' });
+        }
+
         const perReviewPrice = await resolvePerReviewPrice(review.is_paid ? review.paid_review_price : req.body?.perReviewPrice);
         if (!perReviewPrice) {
             return res.status(400).json({ error: 'Please set per review price first' });
@@ -536,10 +548,15 @@ const markAsPaidCustomDate = async (req, res) => {
         }
         const query = await buildDateRangePaymentQuery(req.user, startDate, endDate, userId);
 
-        const reviews = await Review.find(query).select('_id review_count').lean();
+        const reviews = await Review.find(query).select('_id review_count is_verified').lean();
 
         if (!reviews.length) {
             return res.status(404).json({ error: 'Review not found' });
+        }
+
+        const unverifiedCount = reviews.filter(review => !review.is_verified).length;
+        if (unverifiedCount > 0) {
+            return res.status(400).json({ error: `${unverifiedCount} review entries must be verified before marking this range as paid` });
         }
 
         const paidAt = new Date();
@@ -696,6 +713,7 @@ const getReviewsForBusiness = async (req, res) => {
             Review.find(query)
                 .populate('business_id', 'business_name short_code location business_link')
                 .populate('user_id', 'email username')
+                .populate('verified_by', 'username email role')
                 .sort({ review_date: -1 })
                 .skip(skip)
                 .limit(limitNumber)
@@ -719,7 +737,67 @@ const getReviewsForBusiness = async (req, res) => {
         return res.status(500).json({ error: 'Internal Server Error' });
     }
 };
- 
+
+// Admin and Super Admin can verify a review and mark it as verified or unverified.
+const verifyReview = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ error: 'Invalid review ID' });
+        }
+
+        // Only Admin and Super Admin can verify reviews
+        if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+            return res.status(403).json({ error: 'Access denied: Admin only' });
+        }
+
+        // admin can only verify reviews of users they manage
+        if (req.user.role === 'admin') {
+            const review = await Review.findById(id).select('user_id').lean();
+            if (!review) {
+                return res.status(404).json({ error: 'Review not found' });
+            }
+            const isOwnReview = review.user_id.toString() === req.user._id.toString();
+            const managedUser = isOwnReview ? true : await mongoose.model('User').findOne({
+                _id: review.user_id,
+                managed_by: req.user._id,
+                is_deleted: false,
+            }).select('_id').lean();
+
+            if (!managedUser) {
+                return res.status(403).json({ error: 'Access denied: You can only verify reviews of users you manage only' });
+            }
+        }
+
+        // Mark the review as verified
+        const updated = await Review.findOneAndUpdate(
+            { _id: id },
+            {
+                $set: {
+                    is_verified: true,
+                    verified_at: new Date(),
+                    verified_by: req.user._id,
+                }
+            },
+            { returnDocument: 'after', runValidators: true }
+        )
+            .populate('verified_by', 'username email role')
+            .lean();
+
+        if (!updated) {
+            return res.status(404).json({ error: 'Review not found' });
+        }
+
+        console.log(`Review ${id} verified by user ${req.user._id} at ${new Date().toISOString()}`);
+
+        return res.status(200).json({ message: 'Review verified successfully', review: updated });
+    } catch (error) {
+        console.error('Verify Review Error:', error);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+}
+
 module.exports = {
     addReview,
     editReview,
@@ -733,4 +811,5 @@ module.exports = {
     markAsUnpaidCustomDate,
     getReviewStats,
     getReviewsForBusiness,
+    verifyReview,
 }
