@@ -28,7 +28,12 @@ const NotificationSchema = new mongoose.Schema({
             'completed_work',
             'gbp_post_expiring',
             'gbp_post_expired',
-            'gbp_minimum_count_pending'
+            'gbp_minimum_count_pending',
+            'support_issue_raised',
+            'support_issue_remark',
+            'support_issue_resolved',
+            'support_issue_reopened',
+            'support_issue_status_changed'
         ],
         required: true,
     },

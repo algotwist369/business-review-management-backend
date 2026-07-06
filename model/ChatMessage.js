@@ -55,6 +55,8 @@ const ChatMessageSchema = new mongoose.Schema({
 
 // Compound index for fast retrieval of historical conversations between two users
 ChatMessageSchema.index({ sender_id: 1, recipient_id: 1, createdAt: 1 });
+ChatMessageSchema.index({ recipient_id: 1, sender_id: 1, is_read: 1, createdAt: -1 });
+ChatMessageSchema.index({ sender_id: 1, recipient_id: 1, createdAt: -1 });
 
 // TTL index to automatically delete conversations after 1 month (2592000 seconds)
 ChatMessageSchema.index({ createdAt: 1 }, { expireAfterSeconds: 2592000 });

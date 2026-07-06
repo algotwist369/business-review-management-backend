@@ -22,12 +22,12 @@ const validateMessagingAccess = async (senderId, recipientId) => {
 
     // Super Admin rules
     if (sender.role === 'super_admin') {
-        // Super admins can ONLY message other admins (or super admins)
-        return recipient.role === 'admin' || recipient.role === 'super_admin';
+        // Super admins can message every active user/admin/super admin.
+        return ['user', 'admin', 'super_admin'].includes(recipient.role);
     }
     if (recipient.role === 'super_admin') {
-        // Only admins (or super admins) can message super admins
-        return sender.role === 'admin' || sender.role === 'super_admin';
+        // Any active user can reply/message super admins.
+        return ['user', 'admin', 'super_admin'].includes(sender.role);
     }
 
     // Admins can message their managed users
@@ -66,8 +66,8 @@ const getContacts = async (req, res) => {
         };
 
         if (user.role === 'super_admin') {
-            // Super admins see only admins (and other super admins)
-            contactFilter.role = { $in: ['admin', 'super_admin'] };
+            // Super admins see all active users/admins/super admins.
+            contactFilter.role = { $in: ['user', 'admin', 'super_admin'] };
         } else if (user.role === 'admin') {
             // Admins see their managed users and super admins
             contactFilter.$or = [
@@ -85,24 +85,48 @@ const getContacts = async (req, res) => {
             .select('_id username email role')
             .lean();
 
-        // Populate last message & unread count for each contact
-        const populatedContacts = await Promise.all(contacts.map(async (contact) => {
-            // Get last message
-            const lastMessage = await ChatMessage.findOne({
-                $or: [
-                    { sender_id: user._id, recipient_id: contact._id },
-                    { sender_id: contact._id, recipient_id: user._id }
-                ]
-            })
-            .sort({ createdAt: -1 })
-            .lean();
+        const contactIds = contacts.map(contact => contact._id);
+        const messageStats = contactIds.length
+            ? await ChatMessage.aggregate([
+                {
+                    $match: {
+                        $or: [
+                            { sender_id: user._id, recipient_id: { $in: contactIds } },
+                            { sender_id: { $in: contactIds }, recipient_id: user._id },
+                        ],
+                    },
+                },
+                { $sort: { createdAt: -1 } },
+                {
+                    $addFields: {
+                        contact_id: {
+                            $cond: [{ $eq: ['$sender_id', user._id] }, '$recipient_id', '$sender_id'],
+                        },
+                    },
+                },
+                {
+                    $group: {
+                        _id: '$contact_id',
+                        lastMessage: { $first: '$$ROOT' },
+                        unreadCount: {
+                            $sum: {
+                                $cond: [
+                                    { $and: [{ $eq: ['$recipient_id', user._id] }, { $eq: ['$is_read', false] }] },
+                                    1,
+                                    0,
+                                ],
+                            },
+                        },
+                    },
+                },
+            ])
+            : [];
 
-            // Get unread count
-            const unreadCount = await ChatMessage.countDocuments({
-                sender_id: contact._id,
-                recipient_id: user._id,
-                is_read: false
-            });
+        const statsByContactId = new Map(messageStats.map(stat => [stat._id.toString(), stat]));
+
+        const populatedContacts = contacts.map((contact) => {
+            const stat = statsByContactId.get(contact._id.toString());
+            const lastMessage = stat?.lastMessage;
 
             return {
                 ...contact,
@@ -110,11 +134,11 @@ const getContacts = async (req, res) => {
                     text: lastMessage.text,
                     priority: lastMessage.priority,
                     createdAt: lastMessage.createdAt,
-                    sender_id: lastMessage.sender_id
+                    sender_id: lastMessage.sender_id,
                 } : null,
-                unreadCount
+                unreadCount: stat?.unreadCount || 0,
             };
-        }));
+        });
 
         // Sort contacts by last message time (most recent first)
         populatedContacts.sort((a, b) => {

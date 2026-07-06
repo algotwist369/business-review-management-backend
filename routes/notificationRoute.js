@@ -3,6 +3,7 @@ const router = express.Router();
 const authMiddleware = require('../middlewares/auth.middleware');
 const {
     getNotifications,
+    getUnreadCount,
     markAsRead,
     markAllAsRead,
     clearNotification,
@@ -13,6 +14,7 @@ const {
 router.use(authMiddleware);
 
 router.get('/', getNotifications);
+router.get('/unread-count', getUnreadCount);
 router.patch('/read-all', markAllAsRead);
 router.patch('/:id/read', markAsRead);
 router.delete('/clear-all', clearAllNotifications);

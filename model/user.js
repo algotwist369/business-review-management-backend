@@ -148,5 +148,7 @@ mongoose.connection.on('open', async () => {
 
 // Optional indexes
 user_schema.index({ role: 1 })
+user_schema.index({ is_deleted: 1, is_active: 1, role: 1 })
+user_schema.index({ managed_by: 1, is_deleted: 1, is_active: 1, role: 1 })
 
 module.exports = mongoose.model('User', user_schema)

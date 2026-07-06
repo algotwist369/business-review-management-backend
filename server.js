@@ -28,6 +28,7 @@ if (cluster.isPrimary && useCluster) {
     const mongoose = require('mongoose');
     const connectDB = require('./config/db');
     const { connectReviewDB } = require('./config/reviewDb');
+    const { connectSupportDB } = require('./config/supportDb');
     const cors = require('cors');
     const helmet = require('helmet');
     const compression = require('compression');
@@ -73,6 +74,9 @@ if (cluster.isPrimary && useCluster) {
     connectReviewDB().catch((error) => {
         console.error('Review MongoDB connection error:', error);
     });
+    connectSupportDB().catch((error) => {
+        console.error('Support MongoDB connection error:', error);
+    });
 
     // Start cron job only on the first worker or if not in cluster mode to avoid duplicate runs
     if (!cluster.isWorker || (cluster.worker && cluster.worker.id === 1)) {
@@ -97,6 +101,7 @@ if (cluster.isPrimary && useCluster) {
     app.use('/api/leads-management', require('./routes/leadsRoute'));
     app.use('/api/google-ads', require('./routes/googleAdsRoute'));
     app.use('/api/notifications', require('./routes/notificationRoute'));
+    app.use('/api/support', require('./routes/supportRoute'));
     app.use('/api/chat', require('./routes/chatRoute'));
 
 

@@ -40,6 +40,32 @@ const getNotifications = async (req, res) => {
     }
 };
 
+const getUnreadCount = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        const types = String(req.query.types || '')
+            .split(',')
+            .map(type => type.trim())
+            .filter(Boolean);
+
+        const filter = {
+            user_id: userId,
+            is_cleared: false,
+            is_read: false,
+        };
+
+        if (types.length) {
+            filter.type = { $in: types };
+        }
+
+        const count = await Notification.countDocuments(filter);
+        return res.status(200).json({ count });
+    } catch (error) {
+        console.error('[Notification Controller] getUnreadCount error:', error);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
 // Mark a single notification as read
 const markAsRead = async (req, res) => {
     try {
@@ -122,6 +148,7 @@ const clearAllNotifications = async (req, res) => {
 
 module.exports = {
     getNotifications,
+    getUnreadCount,
     markAsRead,
     markAllAsRead,
     clearNotification,
