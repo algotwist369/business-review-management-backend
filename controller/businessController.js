@@ -132,6 +132,7 @@ const getAllBusiness = async (req, res) => {
         }
 
         let businesses = await Business.find(filter)
+            .populate('user_id', 'username email role')
             .sort(sort)
             .skip(skip)
             .limit(Number(limit))
@@ -161,10 +162,21 @@ const getAllBusiness = async (req, res) => {
                 });
             });
 
-            businesses = businesses.map(business => ({
-                ...business,
-                assigned_users: usersByBusinessId.get(business._id.toString()) || []
-            }));
+            businesses = businesses.map(business => {
+                const assignedForBusiness = usersByBusinessId.get(business._id.toString()) || [];
+                const populatedCreator = business.user_id && (business.user_id.username || business.user_id.email)
+                    ? business.user_id
+                    : null;
+                const fallbackCreator = assignedForBusiness[0]
+                    ? { ...assignedForBusiness[0], role: 'user', is_legacy_fallback: true }
+                    : null;
+
+                return {
+                    ...business,
+                    assigned_users: assignedForBusiness,
+                    added_by: populatedCreator || fallbackCreator,
+                };
+            });
         }
 
         const total = await Business.countDocuments(filter);
@@ -344,3 +356,5 @@ module.exports = {
     deleteBusiness,
     updateBusinessStatus
 }
+
+
