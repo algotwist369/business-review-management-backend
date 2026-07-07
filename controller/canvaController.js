@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const CanvaManagement = require('../model/CanvaManagement');
 const User = require('../model/user');
 const Business = require('../model/Business');
+const { normalizeAssetInput } = require('../utils/assetUtils');
 
 // Get all Canva records
 const getCanvaRecords = async (req, res) => {
@@ -129,11 +130,11 @@ const createOrUpdateCanvaRecord = async (req, res) => {
             }
 
             // Update fields
-            if (logo !== undefined) record.logo = logo;
-            if (fav_icon !== undefined) record.fav_icon = fav_icon;
-            if (banner !== undefined) record.banner = banner;
-            if (offer_card !== undefined) record.offer_card = offer_card;
-            if (visit_card !== undefined) record.visit_card = visit_card;
+            if (logo !== undefined) record.logo = normalizeAssetInput(logo, req.user._id, record.logo);
+            if (fav_icon !== undefined) record.fav_icon = normalizeAssetInput(fav_icon, req.user._id, record.fav_icon);
+            if (banner !== undefined) record.banner = normalizeAssetInput(banner, req.user._id, record.banner);
+            if (offer_card !== undefined) record.offer_card = normalizeAssetInput(offer_card, req.user._id, record.offer_card);
+            if (visit_card !== undefined) record.visit_card = normalizeAssetInput(visit_card, req.user._id, record.visit_card);
 
             if (req.user.role !== 'user' && user_id) {
                 record.user_id = targetUserId;
@@ -155,11 +156,11 @@ const createOrUpdateCanvaRecord = async (req, res) => {
             const newRecord = await CanvaManagement.create({
                 user_id: targetUserId,
                 business_id,
-                logo: logo || {},
-                fav_icon: fav_icon || {},
-                banner: banner || {},
-                offer_card: offer_card || {},
-                visit_card: visit_card || {}
+                logo: normalizeAssetInput(logo || {}, req.user._id),
+                fav_icon: normalizeAssetInput(fav_icon || {}, req.user._id),
+                banner: normalizeAssetInput(banner || {}, req.user._id),
+                offer_card: normalizeAssetInput(offer_card || {}, req.user._id),
+                visit_card: normalizeAssetInput(visit_card || {}, req.user._id)
             });
 
             const populated = await CanvaManagement.findById(newRecord._id)
@@ -185,3 +186,5 @@ module.exports = {
     getCanvaRecords,
     createOrUpdateCanvaRecord
 };
+
+

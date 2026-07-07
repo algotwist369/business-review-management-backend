@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const GoogleAdsTeam = require('../model/GoogleAdsTeam');
 const User = require('../model/user');
 const Business = require('../model/Business');
+const { normalizeAssetInput } = require('../utils/assetUtils');
 
 // Get all Google Ads records
 const getGoogleAdsRecords = async (req, res) => {
@@ -138,9 +139,9 @@ const createOrUpdateGoogleAdsRecord = async (req, res) => {
             }
 
             // Update fields
-            if (is_gmb_created !== undefined) record.is_gmb_created = is_gmb_created;
-            if (is_whatsapp_live !== undefined) record.is_whatsapp_live = is_whatsapp_live;
-            if (is_number_verified !== undefined) record.is_number_verified = is_number_verified;
+            if (is_gmb_created !== undefined) record.is_gmb_created = normalizeAssetInput(is_gmb_created, req.user._id, record.is_gmb_created);
+            if (is_whatsapp_live !== undefined) record.is_whatsapp_live = normalizeAssetInput(is_whatsapp_live, req.user._id, record.is_whatsapp_live);
+            if (is_number_verified !== undefined) record.is_number_verified = normalizeAssetInput(is_number_verified, req.user._id, record.is_number_verified);
             if (status !== undefined) record.status = status;
             if (remarks !== undefined) record.remarks = remarks;
 
@@ -169,9 +170,9 @@ const createOrUpdateGoogleAdsRecord = async (req, res) => {
             const newRecord = await GoogleAdsTeam.create({
                 user_id: targetUserId,
                 business_id,
-                is_gmb_created: is_gmb_created || {},
-                is_whatsapp_live: is_whatsapp_live || {},
-                is_number_verified: is_number_verified || {},
+                is_gmb_created: normalizeAssetInput(is_gmb_created || {}, req.user._id),
+                is_whatsapp_live: normalizeAssetInput(is_whatsapp_live || {}, req.user._id),
+                is_number_verified: normalizeAssetInput(is_number_verified || {}, req.user._id),
                 status: status || 'pending',
                 remarks
             });
@@ -204,3 +205,5 @@ module.exports = {
     getGoogleAdsRecords,
     createOrUpdateGoogleAdsRecord
 };
+
+

@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const LeadsManagement = require('../model/LeadsManagement');
 const User = require('../model/user');
 const Business = require('../model/Business');
+const { normalizeAssetInput } = require('../utils/assetUtils');
 
 // Get all Leads records
 const getLeadsRecords = async (req, res) => {
@@ -140,11 +141,11 @@ const createOrUpdateLeadsRecord = async (req, res) => {
             }
 
             // Update fields
-            if (double_tick_management !== undefined) record.double_tick_management = double_tick_management;
-            if (bot_leads_management !== undefined) record.bot_leads_management = bot_leads_management;
-            if (spa_advisor_leads !== undefined) record.spa_advisor_leads = spa_advisor_leads;
-            if (crm_management !== undefined) record.crm_management = crm_management;
-            if (spa_advisor_management !== undefined) record.spa_advisor_management = spa_advisor_management;
+            if (double_tick_management !== undefined) record.double_tick_management = normalizeAssetInput(double_tick_management, req.user._id, record.double_tick_management);
+            if (bot_leads_management !== undefined) record.bot_leads_management = normalizeAssetInput(bot_leads_management, req.user._id, record.bot_leads_management);
+            if (spa_advisor_leads !== undefined) record.spa_advisor_leads = normalizeAssetInput(spa_advisor_leads, req.user._id, record.spa_advisor_leads);
+            if (crm_management !== undefined) record.crm_management = normalizeAssetInput(crm_management, req.user._id, record.crm_management);
+            if (spa_advisor_management !== undefined) record.spa_advisor_management = normalizeAssetInput(spa_advisor_management, req.user._id, record.spa_advisor_management);
             if (status !== undefined) record.status = status;
             if (remarks !== undefined) record.remarks = remarks;
 
@@ -173,11 +174,11 @@ const createOrUpdateLeadsRecord = async (req, res) => {
             const newRecord = await LeadsManagement.create({
                 user_id: targetUserId,
                 business_id,
-                double_tick_management: double_tick_management || {},
-                bot_leads_management: bot_leads_management || {},
-                spa_advisor_leads: spa_advisor_leads || {},
-                crm_management: crm_management || {},
-                spa_advisor_management: spa_advisor_management || {},
+                double_tick_management: normalizeAssetInput(double_tick_management || {}, req.user._id),
+                bot_leads_management: normalizeAssetInput(bot_leads_management || {}, req.user._id),
+                spa_advisor_leads: normalizeAssetInput(spa_advisor_leads || {}, req.user._id),
+                crm_management: normalizeAssetInput(crm_management || {}, req.user._id),
+                spa_advisor_management: normalizeAssetInput(spa_advisor_management || {}, req.user._id),
                 status: status || 'pending',
                 remarks
             });
@@ -210,3 +211,5 @@ module.exports = {
     getLeadsRecords,
     createOrUpdateLeadsRecord
 };
+
+

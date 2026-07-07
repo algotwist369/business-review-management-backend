@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const JustdialManagementTeam = require('../model/JustdialManagementTeam');
 const User = require('../model/user');
 const Business = require('../model/Business');
+const { normalizeAssetInput } = require('../utils/assetUtils');
 
 // Get all JD records
 const getJsRecords = async (req, res) => {
@@ -140,11 +141,11 @@ const createOrUpdateJsRecord = async (req, res) => {
             }
 
             // Update fields
-            if (is_live !== undefined) record.is_live = is_live;
-            if (photo_shoot !== undefined) record.photo_shoot = photo_shoot;
-            if (video_shoot !== undefined) record.video_shoot = video_shoot;
-            if (is_360_tour !== undefined) record.is_360_tour = is_360_tour;
-            if (influencer_marketing !== undefined) record.influencer_marketing = influencer_marketing;
+            if (is_live !== undefined) record.is_live = normalizeAssetInput(is_live, req.user._id, record.is_live);
+            if (photo_shoot !== undefined) record.photo_shoot = normalizeAssetInput(photo_shoot, req.user._id, record.photo_shoot);
+            if (video_shoot !== undefined) record.video_shoot = normalizeAssetInput(video_shoot, req.user._id, record.video_shoot);
+            if (is_360_tour !== undefined) record.is_360_tour = normalizeAssetInput(is_360_tour, req.user._id, record.is_360_tour);
+            if (influencer_marketing !== undefined) record.influencer_marketing = normalizeAssetInput(influencer_marketing, req.user._id, record.influencer_marketing);
             if (status !== undefined) record.status = status;
             if (remarks !== undefined) record.remarks = remarks;
 
@@ -173,11 +174,11 @@ const createOrUpdateJsRecord = async (req, res) => {
             const newRecord = await JustdialManagementTeam.create({
                 user_id: targetUserId,
                 business_id,
-                is_live: is_live || {},
-                photo_shoot: photo_shoot || {},
-                video_shoot: video_shoot || {},
-                is_360_tour: is_360_tour || {},
-                influencer_marketing: influencer_marketing || {},
+                is_live: normalizeAssetInput(is_live || {}, req.user._id),
+                photo_shoot: normalizeAssetInput(photo_shoot || {}, req.user._id),
+                video_shoot: normalizeAssetInput(video_shoot || {}, req.user._id),
+                is_360_tour: normalizeAssetInput(is_360_tour || {}, req.user._id),
+                influencer_marketing: normalizeAssetInput(influencer_marketing || {}, req.user._id),
                 status: status || 'pending',
                 remarks
             });
@@ -210,3 +211,5 @@ module.exports = {
     getJsRecords,
     createOrUpdateJsRecord
 };
+
+

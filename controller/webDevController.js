@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const WebDevTeam = require('../model/WebDevTeam');
 const User = require('../model/user');
 const Business = require('../model/Business');
+const { normalizeAssetInput } = require('../utils/assetUtils');
 
 // Get all Web Dev records
 const getWebDevRecords = async (req, res) => {
@@ -142,13 +143,13 @@ const createOrUpdateWebDevRecord = async (req, res) => {
             }
 
             // Update fields
-            if (is_website_live !== undefined) record.is_website_live = is_website_live;
-            if (is_domain_registered !== undefined) record.is_domain_registered = is_domain_registered;
-            if (is_adsvert_site !== undefined) record.is_adsvert_site = is_adsvert_site;
-            if (is_keywords_site !== undefined) record.is_keywords_site = is_keywords_site;
-            if (is_main_site !== undefined) record.is_main_site = is_main_site;
-            if (is_git_hub_repo !== undefined) record.is_git_hub_repo = is_git_hub_repo;
-            if (technology_stack !== undefined) record.technology_stack = technology_stack;
+            if (is_website_live !== undefined) record.is_website_live = normalizeAssetInput(is_website_live, req.user._id, record.is_website_live);
+            if (is_domain_registered !== undefined) record.is_domain_registered = normalizeAssetInput(is_domain_registered, req.user._id, record.is_domain_registered);
+            if (is_adsvert_site !== undefined) record.is_adsvert_site = normalizeAssetInput(is_adsvert_site, req.user._id, record.is_adsvert_site);
+            if (is_keywords_site !== undefined) record.is_keywords_site = normalizeAssetInput(is_keywords_site, req.user._id, record.is_keywords_site);
+            if (is_main_site !== undefined) record.is_main_site = normalizeAssetInput(is_main_site, req.user._id, record.is_main_site);
+            if (is_git_hub_repo !== undefined) record.is_git_hub_repo = normalizeAssetInput(is_git_hub_repo, req.user._id, record.is_git_hub_repo);
+            if (technology_stack !== undefined) record.technology_stack = normalizeAssetInput(technology_stack, req.user._id, record.technology_stack);
             if (status !== undefined) record.status = status;
             if (remarks !== undefined) record.remarks = remarks;
 
@@ -177,13 +178,13 @@ const createOrUpdateWebDevRecord = async (req, res) => {
             const newRecord = await WebDevTeam.create({
                 user_id: targetUserId,
                 business_id,
-                is_website_live: is_website_live || {},
-                is_domain_registered: is_domain_registered || {},
-                is_adsvert_site: is_adsvert_site || {},
-                is_keywords_site: is_keywords_site || {},
-                is_main_site: is_main_site || {},
-                is_git_hub_repo: is_git_hub_repo || {},
-                technology_stack: technology_stack || {},
+                is_website_live: normalizeAssetInput(is_website_live || {}, req.user._id),
+                is_domain_registered: normalizeAssetInput(is_domain_registered || {}, req.user._id),
+                is_adsvert_site: normalizeAssetInput(is_adsvert_site || {}, req.user._id),
+                is_keywords_site: normalizeAssetInput(is_keywords_site || {}, req.user._id),
+                is_main_site: normalizeAssetInput(is_main_site || {}, req.user._id),
+                is_git_hub_repo: normalizeAssetInput(is_git_hub_repo || {}, req.user._id),
+                technology_stack: normalizeAssetInput(technology_stack || {}, req.user._id),
                 status: status || 'pending',
                 remarks
             });
@@ -216,3 +217,5 @@ module.exports = {
     getWebDevRecords,
     createOrUpdateWebDevRecord
 };
+
+
