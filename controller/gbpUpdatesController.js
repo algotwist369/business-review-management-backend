@@ -221,6 +221,12 @@ const endOfDay = (date = new Date()) => {
     return d;
 };
 
+const parseLocalDay = (date) => {
+    if (!date) return new Date();
+    const [year, monthNumber, day] = date.split('-').map(Number);
+    return new Date(year, monthNumber - 1, day);
+};
+
 const normalizeForCompare = (value) => {
     if (value instanceof Date) return value.toISOString();
     if (value && typeof value.toObject === 'function') return value.toObject();
