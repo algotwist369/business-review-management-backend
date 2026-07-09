@@ -8,6 +8,8 @@ const {
     getGbpUpdateById,
     getGbpUpdatesByBusiness,
     getGbpUpdatesSummary,
+    getGbpDailyActivities,
+    getGbpDailySummary,
     deleteGbpUpdate
 } = require('../controller/gbpUpdatesController');
 
@@ -21,6 +23,8 @@ router.use(requireScope('social_media_management'));
 // Define routes
 router.get('/', getGbpUpdates);
 router.get('/summary', getGbpUpdatesSummary);
+router.get('/daily', getGbpDailyActivities);
+router.get('/daily-summary', getGbpDailySummary);
 router.get('/business/:businessId', getGbpUpdatesByBusiness);
 router.get('/:id', getGbpUpdateById);
 router.post('/', createGbpUpdate);
@@ -28,3 +32,4 @@ router.put('/:id', updateGbpUpdate);
 router.delete('/:id', deleteGbpUpdate);
 
 module.exports = router;
+

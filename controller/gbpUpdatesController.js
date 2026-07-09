@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const GoogleBusinessProfileUpdates = require('../model/GoogleBusinessProfileUpdates');
+const GbpDailyActivity = require('../model/GbpDailyActivity');
 const User = require('../model/user');
 const Business = require('../model/Business');
 const { normalizeAssetInput } = require('../utils/assetUtils');
@@ -12,6 +13,10 @@ const validateMonth = (month) => {
 const validateCount = (val) => {
     if (val === undefined || val === null) return true;
     return Number.isInteger(Number(val)) && Number(val) >= 0;
+};
+
+const validateDate = (date) => {
+    return typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date);
 };
 
 const parseMonthBounds = (month) => {
@@ -188,6 +193,131 @@ const preservePermanentCounts = (incomingCounts, fallbackCounts = {}) => {
     return preserved;
 };
 
+const dailyTrackedFields = [
+    'product_count',
+    'service_count',
+    'media_count',
+    'post_start_date',
+    'post_end_date',
+    'scheduled_posts_count',
+    'update_link',
+    'status',
+    'remarks',
+    'is_number_live',
+    'is_whatsapp_live',
+    'is_website_live',
+    'is_email_live'
+];
+
+const startOfDay = (date = new Date()) => {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    return d;
+};
+
+const endOfDay = (date = new Date()) => {
+    const d = new Date(date);
+    d.setHours(23, 59, 59, 999);
+    return d;
+};
+
+const normalizeForCompare = (value) => {
+    if (value instanceof Date) return value.toISOString();
+    if (value && typeof value.toObject === 'function') return value.toObject();
+    if (value && typeof value === 'object') return JSON.parse(JSON.stringify(value));
+    return value ?? null;
+};
+
+const snapshotGbpRecord = (record) => {
+    if (!record) return null;
+    const raw = typeof record.toObject === 'function' ? record.toObject() : record;
+    return dailyTrackedFields.reduce((snapshot, field) => {
+        snapshot[field] = normalizeForCompare(raw[field]);
+        return snapshot;
+    }, {});
+};
+
+const getChangedFields = (beforeSnapshot, afterSnapshot) => {
+    if (!afterSnapshot) return [];
+    if (!beforeSnapshot) {
+        return dailyTrackedFields.filter(field => {
+            const value = afterSnapshot[field];
+            return value !== undefined && value !== null && value !== '';
+        });
+    }
+
+    return dailyTrackedFields.filter(field => {
+        return JSON.stringify(normalizeForCompare(beforeSnapshot[field])) !== JSON.stringify(normalizeForCompare(afterSnapshot[field]));
+    });
+};
+
+const logGbpDailyActivity = async ({ record, previousRecord, changedBy, action }) => {
+    try {
+        const previousSnapshot = snapshotGbpRecord(previousRecord);
+        const newSnapshot = snapshotGbpRecord(record);
+        const changedFields = getChangedFields(previousSnapshot, newSnapshot);
+
+        if (action === 'updated' && changedFields.length === 0) return;
+
+        await GbpDailyActivity.create({
+            gbp_update_id: record._id,
+            user_id: record.user_id,
+            business_id: record.business_id,
+            month: record.month,
+            activity_date: startOfDay(new Date()),
+            changed_by: changedBy,
+            action,
+            changed_fields: changedFields,
+            changed_fields_count: changedFields.length,
+            previous_data: previousSnapshot,
+            new_data: newSnapshot,
+        });
+    } catch (error) {
+        console.error('GBP Daily Activity Log Error:', error);
+    }
+};
+
+const backfillLegacyDailyActivities = async (baseFilter = {}, activityDate = new Date()) => {
+    const dayStart = startOfDay(activityDate);
+    const dayEnd = endOfDay(activityDate);
+    const records = await GoogleBusinessProfileUpdates.find({
+        ...baseFilter,
+        $or: [
+            { updatedAt: { $gte: dayStart, $lte: dayEnd } },
+            { createdAt: { $gte: dayStart, $lte: dayEnd } }
+        ]
+    })
+        .select('user_id business_id month product_count service_count media_count post_start_date post_end_date scheduled_posts_count update_link status remarks is_number_live is_whatsapp_live is_website_live is_email_live updated_by createdAt updatedAt')
+        .limit(2000)
+        .lean();
+
+    await Promise.all(records.map(record => {
+        const legacyKey = `gbp:${record._id}`;
+        return GbpDailyActivity.updateOne(
+            { legacy_key: legacyKey },
+            {
+                $setOnInsert: {
+                    gbp_update_id: record._id,
+                    user_id: record.user_id,
+                    business_id: record.business_id,
+                    month: record.month,
+                    activity_date: startOfDay(record.updatedAt || record.createdAt || new Date()),
+                    changed_by: record.updated_by || record.user_id,
+                    action: 'legacy_snapshot',
+                    changed_fields: dailyTrackedFields,
+                    changed_fields_count: dailyTrackedFields.length,
+                    previous_data: null,
+                    new_data: snapshotGbpRecord(record),
+                    is_legacy: true,
+                    legacy_key: legacyKey,
+                }
+            },
+            { upsert: true }
+        ).catch(error => {
+            if (error.code !== 11000) console.error('GBP Legacy Daily Activity Error:', error);
+        });
+    }));
+};
 // Create or update monthly record
 const createGbpUpdate = async (req, res) => {
     try {
@@ -278,6 +408,7 @@ const createGbpUpdate = async (req, res) => {
         let record = await GoogleBusinessProfileUpdates.findOne({ user_id: targetUserId, business_id, month });
 
         if (record) {
+            const previousRecord = record.toObject();
             // Check if requester is allowed to update this existing record
             if (req.user.role === 'admin') {
                 const recordUser = await User.findById(record.user_id).lean();
@@ -299,19 +430,20 @@ const createGbpUpdate = async (req, res) => {
             if (update_link !== undefined) record.update_link = update_link;
             if (status !== undefined) record.status = status;
             if (remarks !== undefined) record.remarks = remarks;
-            
+
             if (is_number_live !== undefined) record.is_number_live = normalizeAssetInput(is_number_live, req.user._id, record.is_number_live);
             if (is_whatsapp_live !== undefined) record.is_whatsapp_live = normalizeAssetInput(is_whatsapp_live, req.user._id, record.is_whatsapp_live);
             if (is_website_live !== undefined) record.is_website_live = normalizeAssetInput(is_website_live, req.user._id, record.is_website_live);
             if (is_email_live !== undefined) record.is_email_live = normalizeAssetInput(is_email_live, req.user._id, record.is_email_live);
-            
+
             if (req.user.role !== 'user' && user_id) {
                 record.user_id = targetUserId;
             }
-            
+
             record.updated_by = req.user._id;
 
             await record.save();
+            await logGbpDailyActivity({ record, previousRecord, changedBy: req.user._id, action: 'updated' });
 
             if (record.status === 'completed') {
                 const { handleWorkspaceCompletion } = require('../services/notificationService');
@@ -349,6 +481,8 @@ const createGbpUpdate = async (req, res) => {
                 is_email_live: normalizeAssetInput(is_email_live || {}, req.user._id),
                 updated_by: req.user._id
             });
+
+            await logGbpDailyActivity({ record: newRecord, previousRecord: null, changedBy: req.user._id, action: 'created' });
 
             if (newRecord.status === 'completed') {
                 const { handleWorkspaceCompletion } = require('../services/notificationService');
@@ -450,6 +584,8 @@ const updateGbpUpdate = async (req, res) => {
             record.user_id = user_id;
         }
 
+        const previousRecord = record.toObject();
+
         const fallbackCounts = await getLatestPermanentCounts(record.user_id, record.business_id, record.month, record._id);
         const preservedCounts = preservePermanentCounts(
             { product_count, service_count, media_count },
@@ -475,6 +611,7 @@ const updateGbpUpdate = async (req, res) => {
         record.updated_by = req.user._id;
 
         await record.save();
+        await logGbpDailyActivity({ record, previousRecord, changedBy: req.user._id, action: 'updated' });
 
         if (record.status === 'completed') {
             const { handleWorkspaceCompletion } = require('../services/notificationService');
@@ -506,7 +643,6 @@ const getGbpUpdates = async (req, res) => {
         if (month && !validateMonth(month)) {
             return res.status(400).json({ error: 'month must be in YYYY-MM format' });
         }
-
         const allowedStatus = ['pending', 'in_progress', 'completed', 'suspended', '404'];
         if (status && !allowedStatus.includes(status)) {
             return res.status(400).json({ error: `status must be one of: ${allowedStatus.join(', ')}` });
@@ -551,6 +687,155 @@ const getGbpUpdates = async (req, res) => {
     }
 };
 
+
+const applyTargetUserFilter = async (filter, req, targetUserId) => {
+    if (!targetUserId) return filter;
+    if (!mongoose.Types.ObjectId.isValid(targetUserId)) {
+        const error = new Error('Invalid user_id');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    if (req.user.role === 'user' && req.user._id.toString() !== targetUserId.toString()) {
+        const error = new Error('Access denied for this user');
+        error.statusCode = 403;
+        throw error;
+    }
+
+    if (req.user.role === 'admin' && req.user._id.toString() !== targetUserId.toString()) {
+        const managedUser = await User.findOne({ _id: targetUserId, managed_by: req.user._id, is_deleted: false }).select('_id').lean();
+        if (!managedUser) {
+            const error = new Error('Access denied for this user');
+            error.statusCode = 403;
+            throw error;
+        }
+    }
+
+    const currentAllowed = filter.user_id?.$in;
+    if (currentAllowed) {
+        const allowedIds = currentAllowed.map(id => id.toString());
+        if (!allowedIds.includes(targetUserId.toString())) {
+            const error = new Error('Access denied for this user');
+            error.statusCode = 403;
+            throw error;
+        }
+    }
+
+    filter.user_id = targetUserId;
+    return filter;
+};
+
+const getGbpDailyActivities = async (req, res) => {
+    try {
+        const { date, page = 1, limit = 20, search = '', status = '', user_id = '' } = req.query;
+
+        if (date && !validateDate(date)) {
+            return res.status(400).json({ error: 'date must be in YYYY-MM-DD format' });
+        }
+
+        const allowedStatus = ['pending', 'in_progress', 'completed', 'suspended', '404'];
+        if (status && !allowedStatus.includes(status)) {
+            return res.status(400).json({ error: `status must be one of: ${allowedStatus.join(', ')}` });
+        }
+
+        const selectedDate = parseLocalDay(date);
+        const skip = (Number(page) - 1) * Number(limit);
+        const safeLimit = Math.min(Number(limit) || 20, 100);
+
+        let roleFilter = await buildRoleFilter(req);
+        roleFilter = await applyTargetUserFilter(roleFilter, req, user_id);
+        await backfillLegacyDailyActivities(roleFilter, selectedDate);
+
+        let filter = {
+            ...roleFilter,
+            activity_date: { $gte: startOfDay(selectedDate), $lte: endOfDay(selectedDate) }
+        };
+        filter = await applyBusinessSearchFilter(filter, search);
+
+        const allForStatus = status
+            ? await GbpDailyActivity.find(filter).sort({ activity_date: -1, updatedAt: -1, createdAt: -1 }).lean()
+            : null;
+        const total = status
+            ? allForStatus.filter(activity => (activity.new_data?.status || 'pending') === status).length
+            : await GbpDailyActivity.countDocuments(filter);
+
+        const activities = status
+            ? allForStatus.filter(activity => (activity.new_data?.status || 'pending') === status).slice(skip, skip + safeLimit)
+            : await GbpDailyActivity.find(filter)
+                .sort({ activity_date: -1, updatedAt: -1, createdAt: -1 })
+                .skip(skip)
+                .limit(safeLimit)
+                .lean();
+
+        const populated = await GbpDailyActivity.populate(activities, [
+            { path: 'business_id', select: 'business_name location short_code business_link' },
+            { path: 'user_id', select: 'username email' },
+            { path: 'changed_by', select: 'username email role' }
+        ]);
+
+        return res.status(200).json({
+            total,
+            page: Number(page),
+            limit: safeLimit,
+            data: populated
+        });
+    } catch (error) {
+        console.error('Get GBP Daily Activities Error:', error);
+        return res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Internal Server Error' });
+    }
+};
+
+const getGbpDailySummary = async (req, res) => {
+    try {
+        const { date, search = '', user_id = '' } = req.query;
+
+        if (date && !validateDate(date)) {
+            return res.status(400).json({ error: 'date must be in YYYY-MM-DD format' });
+        }
+
+        const selectedDate = parseLocalDay(date);
+        let roleFilter = await buildRoleFilter(req);
+        roleFilter = await applyTargetUserFilter(roleFilter, req, user_id);
+        await backfillLegacyDailyActivities(roleFilter, selectedDate);
+
+        let filter = {
+            ...roleFilter,
+            activity_date: { $gte: startOfDay(selectedDate), $lte: endOfDay(selectedDate) }
+        };
+        filter = await applyBusinessSearchFilter(filter, search);
+
+        const rows = await GbpDailyActivity.find(filter)
+            .select('user_id business_id action changed_fields_count new_data')
+            .lean();
+
+        const uniqueUsers = new Set();
+        const uniqueBusinesses = new Set();
+        const statusCounts = { pending: 0, in_progress: 0, completed: 0, suspended: 0, 404: 0 };
+        let changedFields = 0;
+        let legacyCount = 0;
+
+        rows.forEach(row => {
+            if (row.user_id) uniqueUsers.add(row.user_id.toString());
+            if (row.business_id) uniqueBusinesses.add(row.business_id.toString());
+            changedFields += row.changed_fields_count || 0;
+            if (row.action === 'legacy_snapshot') legacyCount += 1;
+            const stat = row.new_data?.status || 'pending';
+            statusCounts[stat] = (statusCounts[stat] || 0) + 1;
+        });
+
+        return res.status(200).json({
+            total_events: rows.length,
+            active_users: uniqueUsers.size,
+            businesses_updated: uniqueBusinesses.size,
+            changed_fields_count: changedFields,
+            legacy_count: legacyCount,
+            status_counts: statusCounts,
+        });
+    } catch (error) {
+        console.error('Get GBP Daily Summary Error:', error);
+        return res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Internal Server Error' });
+    }
+};
 // Get single record by ID
 const getGbpUpdateById = async (req, res) => {
     try {
@@ -744,7 +1029,15 @@ module.exports = {
     getGbpUpdateById,
     getGbpUpdatesByBusiness,
     getGbpUpdatesSummary,
+    getGbpDailyActivities,
+    getGbpDailySummary,
     deleteGbpUpdate
 };
+
+
+
+
+
+
 
 
