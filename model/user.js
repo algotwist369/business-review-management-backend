@@ -34,6 +34,15 @@ const user_schema = new mongoose.Schema(
       default: 'user',
     },
 
+    failed_login_attempts: {
+      type: Number,
+      default: 0,
+    },
+
+    last_failed_login: {
+      type: Date,
+    },
+
     // New fields for team management
     team_type:{
       type: String,

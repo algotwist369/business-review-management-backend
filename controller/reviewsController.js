@@ -265,14 +265,16 @@ const deleteReview = async (req, res) => {
     }
 };
 
-// ===========Admin routes==========
+// =========== Admin routes ==========
 
 // Get all reviews by user id
 const getReviewsByUser = async (req, res) => {
     try {
         // Admin check
         const { userId } = req.params;
-        const { page = 1, limit = 20, filterType, startDate: start, endDate: end } = req.query;
+        const { page = 1, limit = 20, filterType, startDate: start, endDate: end, search, location, paymentStatus } = req.query;
+
+        console.log('🔍 getReviewsByUser params:', { userId, search, location, paymentStatus, filterType });
 
         // Allow access if admin, super_admin OR if viewing own reviews
         if (!req.user || (req.user.role !== 'admin' && req.user.role !== 'super_admin' && req.user.id.toString() !== userId)) {
@@ -291,19 +293,16 @@ const getReviewsByUser = async (req, res) => {
         if (filterType === 'weekly') {
             const lastWeek = new Date();
             lastWeek.setDate(now.getDate() - 7);
-            // Set to start of last week (00:00:00) and end of now (23:59:59.999)
             const startOfLastWeek = new Date(lastWeek.setHours(0, 0, 0, 0));
             const endOfNow = new Date(now.setHours(23, 59, 59, 999));
             dateMatch = { review_date: { $gte: startOfLastWeek, $lte: endOfNow } };
         } else if (filterType === 'monthly') {
             const lastMonth = new Date();
             lastMonth.setMonth(now.getMonth() - 1);
-            // Set to start of last month (00:00:00) and end of now (23:59:59.999)
             const startOfLastMonth = new Date(lastMonth.setHours(0, 0, 0, 0));
             const endOfNow = new Date(now.setHours(23, 59, 59, 999));
             dateMatch = { review_date: { $gte: startOfLastMonth, $lte: endOfNow } };
         } else if (filterType === 'custom' && start && end) {
-            // Set start date to 00:00:00 and end date to 23:59:59.999
             const startDate = new Date(start);
             startDate.setHours(0, 0, 0, 0);
             const endDate = new Date(end);
@@ -316,24 +315,82 @@ const getReviewsByUser = async (req, res) => {
             };
         }
 
-        const query = { user_id: userId, ...dateMatch };
+        // Build pipeline stage for business search and location filter
+        let businessMatchStage = {};
+        if (search) {
+            businessMatchStage['business.business_name'] = { $regex: search, $options: 'i' };
+        }
+        if (location) {
+            businessMatchStage['business.location'] = { $regex: location, $options: 'i' };
+        }
+        console.log('🔍 businessMatchStage:', businessMatchStage);
 
-        // Fetch paginated reviews
-        const reviews = await Review.find(query)
-            .select('review_count review_link review_date business_id is_paid paid_at paid_review_count paid_review_price paid_amount is_verified verified_at verified_by updatedAt')
-            .populate({
-                path: 'business_id',
-                select: 'business_name short_code location business_link',
-            })
-            .populate('verified_by', 'username email role')
-            .sort({ review_date: -1 })
-            .skip(skip)
-            .limit(Number(limit))
-            .lean();
+        // Payment status filter
+        let paymentMatchStage = {};
+        if (paymentStatus === 'paid') {
+            paymentMatchStage['is_paid'] = true;
+        } else if (paymentStatus === 'unpaid') {
+            paymentMatchStage['is_paid'] = false;
+        }
+        console.log('🔍 paymentMatchStage:', paymentMatchStage);
 
-        // Use aggregation to get accurate totals across all pages for this user
-        const totals = await Review.aggregate([
-            { $match: { user_id: new mongoose.Types.ObjectId(userId), ...dateMatch } },
+        // Aggregation pipeline: first filter reviews, then lookup business, then apply business filters, then get totals and paginate
+        const basePipeline = [
+            { $match: { user_id: new mongoose.Types.ObjectId(userId), ...dateMatch, ...paymentMatchStage } },
+            {
+                $lookup: {
+                    from: 'businesses',
+                    localField: 'business_id',
+                    foreignField: '_id',
+                    as: 'business'
+                }
+            },
+            { $unwind: '$business' },
+            { $match: businessMatchStage },
+            {
+                $lookup: {
+                    from: 'users',
+                    localField: 'verified_by',
+                    foreignField: '_id',
+                    as: 'verified_by'
+                }
+            },
+            {
+                $unwind: {
+                    path: '$verified_by',
+                    preserveNullAndEmptyArrays: true
+                }
+            }
+        ];
+
+        // Debug: let's see what the first few steps return
+        const debugPipeline1 = [
+            { $match: { user_id: new mongoose.Types.ObjectId(userId), ...dateMatch, ...paymentMatchStage } },
+            {
+                $lookup: {
+                    from: 'businesses',
+                    localField: 'business_id',
+                    foreignField: '_id',
+                    as: 'business'
+                }
+            },
+        ];
+        const debugData1 = await Review.aggregate(debugPipeline1);
+        console.log('🔍 Debug1 after $lookup (before $unwind and $match):', debugData1.slice(0, 3));
+        console.log('🔍 Debug1 data length:', debugData1.length);
+
+        const debugPipeline2 = [
+            ...debugPipeline1,
+            { $unwind: '$business' },
+            { $match: businessMatchStage },
+        ];
+        const debugData2 = await Review.aggregate(debugPipeline2);
+        console.log('🔍 Debug2 after $unwind and $match:', debugData2.slice(0, 3));
+        console.log('🔍 Debug2 data length:', debugData2.length);
+
+        // Pipeline for totals
+        const totalsPipeline = [
+            ...basePipeline,
             {
                 $group: {
                     _id: null,
@@ -380,7 +437,7 @@ const getReviewsByUser = async (req, res) => {
                                 {
                                     $and: [
                                         { $eq: ['$is_paid', true] },
-                                        { $gt: ['$paid_review_count', 0] }, // Only if locked count exists
+                                        { $gt: ['$paid_review_count', 0] },
                                         { $gt: ['$review_count', '$paid_review_count'] }
                                     ]
                                 },
@@ -395,7 +452,7 @@ const getReviewsByUser = async (req, res) => {
                                 {
                                     $and: [
                                         { $eq: ['$is_paid', true] },
-                                        { $gt: ['$paid_review_count', 0] }, // Only if locked count exists
+                                        { $gt: ['$paid_review_count', 0] },
                                         { $lt: ['$review_count', '$paid_review_count'] }
                                     ]
                                 },
@@ -409,7 +466,48 @@ const getReviewsByUser = async (req, res) => {
                     }
                 }
             }
+        ];
+
+        // Pipeline for paginated reviews
+        const reviewsPipeline = [
+            ...basePipeline,
+            { $sort: { review_date: -1 } },
+            { $skip: skip },
+            { $limit: Number(limit) },
+            {
+                $project: {
+                    review_count: 1,
+                    review_link: 1,
+                    review_date: 1,
+                    business_id: {
+                        _id: '$business._id',
+                        business_name: '$business.business_name',
+                        short_code: '$business.short_code',
+                        location: '$business.location',
+                        business_link: '$business.business_link'
+                    },
+                    is_paid: 1,
+                    paid_at: 1,
+                    paid_review_count: 1,
+                    paid_review_price: 1,
+                    paid_amount: 1,
+                    is_verified: 1,
+                    verified_at: 1,
+                    verified_by: { $cond: ['$verified_by', { username: '$verified_by.username', email: '$verified_by.email', role: '$verified_by.role' }, null] },
+                    updatedAt: 1
+                }
+            }
+        ];
+
+        // Execute both pipelines in parallel
+        const [totals, reviews] = await Promise.all([
+            Review.aggregate(totalsPipeline),
+            Review.aggregate(reviewsPipeline)
         ]);
+
+        console.log('🔍 totals pipeline result:', totals);
+        console.log('🔍 reviews pipeline result length:', reviews.length);
+        console.log('🔍 reviews pipeline first 2:', reviews.slice(0, 2));
 
         const userStats = totals[0] || {
             total_reviews: 0,
@@ -423,7 +521,7 @@ const getReviewsByUser = async (req, res) => {
             total_paid_amount: 0
         };
 
-        return res.status(200).json({
+        const responseData = {
             total_review_count: userStats.total_reviews,
             total_paid_review_count: userStats.total_paid_reviews,
             total_pending_review_count: userStats.total_pending_reviews,
@@ -436,7 +534,11 @@ const getReviewsByUser = async (req, res) => {
             page: Number(page),
             limit: Number(limit),
             data: reviews,
-        });
+        };
+
+        console.log('🔍 final response data:', responseData);
+
+        return res.status(200).json(responseData);
 
     } catch (error) {
         console.error('Get Reviews Error:', error);

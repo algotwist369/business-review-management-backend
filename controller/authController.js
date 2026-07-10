@@ -5,6 +5,7 @@ const User = require('../model/user');
 const Reviews = require('../model/review');
 const Business = require('../model/Business');
 const Notification = require('../model/Notification');
+const { createAlert } = require('../services/monitoring.service');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'secret';
 const JWT_EXPIRES = '7d';
@@ -64,6 +65,28 @@ const googleAuth = async (req, res) => {
             }
             user.last_login = new Date();
             await user.save();
+        }
+
+        // Reset failed login attempts on successful login
+        if (user.failed_login_attempts > 0) {
+            user.failed_login_attempts = 0;
+            await user.save();
+        }
+
+        // Create alert for admin/super admin login
+        if (user.role === 'admin' || user.role === 'super_admin') {
+            await createAlert({
+                type: 'ADMIN_SUSPICIOUS_LOGIN',
+                message: `${user.role} login for ${user.email}`,
+                severity: 'LOW',
+                metadata: {
+                    email: user.email,
+                    user_id: user._id,
+                    role: user.role,
+                    ip: req.ip,
+                    user_agent: req.headers['user-agent'],
+                },
+            });
         }
 
         const token = signToken(user);
@@ -136,11 +159,51 @@ const login = async (req, res) => {
 
         const passwordMatches = await bcrypt.compare(password, user.password_hash);
         if (!passwordMatches) {
+            // Increment failed login attempts
+            user.failed_login_attempts = (user.failed_login_attempts || 0) + 1;
+            user.last_failed_login = new Date();
+            await user.save();
+
+            // Check if failed attempts exceed threshold (e.g., 5)
+            if (user.failed_login_attempts >= 5) {
+                await createAlert({
+                    type: 'ADMIN_SUSPICIOUS_LOGIN',
+                    message: `Suspicious login activity: ${user.failed_login_attempts} failed attempts for ${user.email}`,
+                    severity: 'CRITICAL',
+                    metadata: {
+                        email: user.email,
+                        user_id: user._id,
+                        role: user.role,
+                        failed_attempts: user.failed_login_attempts,
+                        ip: req.ip,
+                        user_agent: req.headers['user-agent'],
+                    },
+                });
+            }
+
             return res.status(401).json({ error: 'Invalid email or password' });
         }
 
+        // Reset failed login attempts on successful login
+        user.failed_login_attempts = 0;
         user.last_login = new Date();
         await user.save();
+
+        // Create alert for admin/super admin login
+        if (user.role === 'admin' || user.role === 'super_admin') {
+            await createAlert({
+                type: 'ADMIN_SUSPICIOUS_LOGIN',
+                message: `${user.role} login for ${user.email}`,
+                severity: 'LOW',
+                metadata: {
+                    email: user.email,
+                    user_id: user._id,
+                    role: user.role,
+                    ip: req.ip,
+                    user_agent: req.headers['user-agent'],
+                },
+            });
+        }
 
         return res.status(200).json({
             message: 'Authentication successful',

@@ -33,6 +33,7 @@ if (cluster.isPrimary && useCluster) {
     const helmet = require('helmet');
     const compression = require('compression');
     const morgan = require('morgan')
+    const apiMonitoringMiddleware = require('./middlewares/apiMonitoring.middleware');
 
     const app = express();
 
@@ -66,6 +67,9 @@ if (cluster.isPrimary && useCluster) {
     app.use(express.json({ limit: '10mb' }));
     app.use(express.urlencoded({ extended: true }));
 
+    // API Monitoring Middleware
+    app.use(apiMonitoringMiddleware);
+
 
     // ==========================
     // 🗄 MongoDB Connection
@@ -78,10 +82,13 @@ if (cluster.isPrimary && useCluster) {
         console.error('Support MongoDB connection error:', error);
     });
 
-    // Start cron job only on the first worker or if not in cluster mode to avoid duplicate runs
+    // Start cron jobs only on the first worker or if not in cluster mode to avoid duplicate runs
     if (!cluster.isWorker || (cluster.worker && cluster.worker.id === 1)) {
         const startBusinessNewStatusJob = require('./jobs/businessNewStatus.job');
         startBusinessNewStatusJob();
+        
+        const startMonitoringJob = require('./jobs/monitoring.job');
+        startMonitoringJob();
     }
 
     // ==========================
@@ -89,6 +96,7 @@ if (cluster.isPrimary && useCluster) {
     // ==========================
     app.use('/api/users', require('./routes/userRoute'));
     app.use('/api/super-admin', require('./routes/superAdminRoute'));
+    app.use('/api/monitoring', require('./routes/monitoringRoute'));
     app.use('/api/business', require('./routes/businessRoute'));
     app.use('/api/reviews', require('./routes/reviewRoute'));
     app.use('/api/groups', require('./routes/groupRoute'));
