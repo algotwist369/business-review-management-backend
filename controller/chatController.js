@@ -26,8 +26,17 @@ const validateMessagingAccess = async (senderId, recipientId) => {
         return ['user', 'admin', 'super_admin'].includes(recipient.role);
     }
     if (recipient.role === 'super_admin') {
-        // Any active user can reply/message super admins.
-        return ['user', 'admin', 'super_admin'].includes(sender.role);
+        if (['admin', 'super_admin'].includes(sender.role)) return true;
+
+        if (sender.role === 'user') {
+            const invitedBySuperAdmin = await ChatMessage.exists({
+                sender_id: recipientId,
+                recipient_id: senderId,
+            });
+            return !!invitedBySuperAdmin;
+        }
+
+        return false;
     }
 
     // Admins can message their managed users
@@ -75,10 +84,29 @@ const getContacts = async (req, res) => {
                 { role: 'user', managed_by: user._id }
             ];
         } else if (user.role === 'user') {
-            // Users see ONLY their managing admins (cannot see super admins)
-            const managingAdminIds = user.managed_by || [];
-            contactFilter.role = 'admin';
-            contactFilter._id = { $in: managingAdminIds };
+            // Users see their managing admins. Super admins appear only after they message this user first.
+            const managingAdminIds = (user.managed_by || [])
+                .map(id => id?.toString())
+                .filter(id => mongoose.Types.ObjectId.isValid(id))
+                .map(id => new mongoose.Types.ObjectId(id));
+
+            const superAdminSenderIds = await ChatMessage.distinct('sender_id', {
+                recipient_id: user._id,
+            });
+
+            const invitedSuperAdminIds = superAdminSenderIds.length
+                ? (await User.find({
+                    _id: { $in: superAdminSenderIds },
+                    role: 'super_admin',
+                    is_deleted: false,
+                    is_active: true,
+                }).select('_id').lean()).map(admin => admin._id)
+                : [];
+
+            contactFilter.$or = [
+                { role: 'admin', _id: { $in: managingAdminIds } },
+                { role: 'super_admin', _id: { $in: invitedSuperAdminIds } },
+            ];
         }
 
         const contacts = await User.find(contactFilter)

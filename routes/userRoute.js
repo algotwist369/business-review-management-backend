@@ -11,6 +11,7 @@ const {
     getAllUsers,
     getUserById,
     updateUserStatus,
+    updateUserCredentials,
     deleteUser,
     assignBusinessesToUser,
     assignScopesToUser,
@@ -20,6 +21,7 @@ const {
 
 const authMiddleware = require('../middlewares/auth.middleware');
 const adminMiddleware = require('../middlewares/admin.middleware');
+const superAdminMiddleware = require('../middlewares/superAdmin.middleware');
 
 
 // Public
@@ -36,6 +38,7 @@ router.get('/search/global', authMiddleware, globalSearch);
 router.get('/', authMiddleware, adminMiddleware, getAllUsers);
 router.get('/:id', authMiddleware, adminMiddleware, getUserById);
 router.patch('/:id/status', authMiddleware, adminMiddleware, updateUserStatus);
+router.patch('/:id/credentials', authMiddleware, superAdminMiddleware, updateUserCredentials);
 router.delete('/:id', authMiddleware, adminMiddleware, deleteUser);
 router.post('/:id/assign-businesses', authMiddleware, adminMiddleware, assignBusinessesToUser);
 router.post('/:id/assign-scopes', authMiddleware, adminMiddleware, assignScopesToUser);

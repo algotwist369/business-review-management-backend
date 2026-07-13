@@ -34,6 +34,9 @@ const signToken = (user) => jwt.sign(
 const validatePassword = (password) =>
     typeof password === 'string' && password.length >= PASSWORD_MIN_LENGTH;
 
+const validateEmail = (email) =>
+    typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
 // signup or login with google 
 const googleAuth = async (req, res) => {
     try {
@@ -424,6 +427,82 @@ const updateUserStatus = async (req, res) => {
     }
 };
 
+
+// update username/email/password - super_admin only
+const updateUserCredentials = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { username, email, password } = req.body;
+
+        if (req.user.role !== 'super_admin') {
+            return res.status(403).json({ error: 'Super Admin only' });
+        }
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ error: 'Invalid user ID' });
+        }
+
+        const updates = {};
+
+        if (username !== undefined) {
+            const cleanUsername = String(username).trim();
+            if (cleanUsername.length < 3 || cleanUsername.length > 50) {
+                return res.status(400).json({ error: 'Username must be between 3 and 50 characters' });
+            }
+            updates.username = cleanUsername;
+        }
+
+        if (email !== undefined) {
+            const normalizedEmail = normalizeEmail(email);
+            if (!validateEmail(normalizedEmail)) {
+                return res.status(400).json({ error: 'Valid email is required' });
+            }
+
+            const emailOwner = await User.findOne({
+                email: normalizedEmail,
+                _id: { $ne: id },
+                is_deleted: false
+            }).select('_id').lean();
+
+            if (emailOwner) {
+                return res.status(409).json({ error: 'Email is already used by another user' });
+            }
+
+            updates.email = normalizedEmail;
+        }
+
+        if (password !== undefined && String(password).trim() !== '') {
+            if (!validatePassword(password)) {
+                return res.status(400).json({ error: `Password must be at least ${PASSWORD_MIN_LENGTH} characters` });
+            }
+            updates.password_hash = await bcrypt.hash(password, 12);
+            updates.failed_login_attempts = 0;
+            updates.last_failed_login = null;
+        }
+
+        if (Object.keys(updates).length === 0) {
+            return res.status(400).json({ error: 'No valid fields provided for update' });
+        }
+
+        const updated = await User.findOneAndUpdate(
+            { _id: id, is_deleted: false },
+            { $set: updates },
+            { returnDocument: 'after', runValidators: true }
+        ).select('-password_hash -__v').lean();
+
+        if (!updated) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        return res.status(200).json(updated);
+    } catch (error) {
+        if (error.code === 11000) {
+            return res.status(409).json({ error: 'Email is already used by another user' });
+        }
+        console.error('Update User Credentials Error:', error);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
 // delete user (admin/super_admin)
 const deleteUser = async (req, res) => {
     try {
@@ -736,6 +815,7 @@ module.exports = {
     getAllUsers,
     getUserById,
     updateUserStatus,
+    updateUserCredentials,
     deleteUser,
     assignBusinessesToUser,
     assignScopesToUser,
