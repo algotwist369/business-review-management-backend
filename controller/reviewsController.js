@@ -272,9 +272,9 @@ const getReviewsByUser = async (req, res) => {
     try {
         // Admin check
         const { userId } = req.params;
-        const { page = 1, limit = 20, filterType, startDate: start, endDate: end, search, location, paymentStatus } = req.query;
+        const { page = 1, limit = 20, filterType, startDate: start, endDate: end, search, location, paymentStatus, verificationStatus } = req.query;
 
-        console.log('🔍 getReviewsByUser params:', { userId, search, location, paymentStatus, filterType });
+        console.log('getReviewsByUser params:', { userId, search, location, paymentStatus, verificationStatus, filterType });
 
         // Allow access if admin, super_admin OR if viewing own reviews
         if (!req.user || (req.user.role !== 'admin' && req.user.role !== 'super_admin' && req.user.id.toString() !== userId)) {
@@ -325,18 +325,24 @@ const getReviewsByUser = async (req, res) => {
         }
         console.log('🔍 businessMatchStage:', businessMatchStage);
 
-        // Payment status filter
+        // Payment and verification filters
         let paymentMatchStage = {};
         if (paymentStatus === 'paid') {
             paymentMatchStage['is_paid'] = true;
         } else if (paymentStatus === 'unpaid') {
             paymentMatchStage['is_paid'] = false;
         }
-        console.log('🔍 paymentMatchStage:', paymentMatchStage);
 
+        let verificationMatchStage = {};
+        if (verificationStatus === 'verified') {
+            verificationMatchStage['is_verified'] = true;
+        } else if (verificationStatus === 'unverified') {
+            verificationMatchStage['is_verified'] = { $ne: true };
+        }
+        console.log('review filter stages:', { paymentMatchStage, verificationMatchStage });
         // Aggregation pipeline: first filter reviews, then lookup business, then apply business filters, then get totals and paginate
         const basePipeline = [
-            { $match: { user_id: new mongoose.Types.ObjectId(userId), ...dateMatch, ...paymentMatchStage } },
+            { $match: { user_id: new mongoose.Types.ObjectId(userId), ...dateMatch, ...paymentMatchStage, ...verificationMatchStage } },
             {
                 $lookup: {
                     from: 'businesses',
@@ -365,7 +371,7 @@ const getReviewsByUser = async (req, res) => {
 
         // Debug: let's see what the first few steps return
         const debugPipeline1 = [
-            { $match: { user_id: new mongoose.Types.ObjectId(userId), ...dateMatch, ...paymentMatchStage } },
+            { $match: { user_id: new mongoose.Types.ObjectId(userId), ...dateMatch, ...paymentMatchStage, ...verificationMatchStage } },
             {
                 $lookup: {
                     from: 'businesses',
@@ -840,26 +846,27 @@ const getReviewsForBusiness = async (req, res) => {
     }
 };
 
-// Admin and Super Admin can verify a review and mark it as verified or unverified.
+// Admin and Super Admin can verify or unverify a review.
 const verifyReview = async (req, res) => {
     try {
         const { id } = req.params;
+        const requestedVerified = req.body?.is_verified;
+        const shouldVerify = requestedVerified === undefined ? true : requestedVerified === true;
 
         if (!mongoose.Types.ObjectId.isValid(id)) {
             return res.status(400).json({ error: 'Invalid review ID' });
         }
 
-        // Only Admin and Super Admin can verify reviews
         if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
             return res.status(403).json({ error: 'Access denied: Admin only' });
         }
 
-        // admin can only verify reviews of users they manage
+        const review = await Review.findById(id).select('user_id is_paid is_verified').lean();
+        if (!review) {
+            return res.status(404).json({ error: 'Review not found' });
+        }
+
         if (req.user.role === 'admin') {
-            const review = await Review.findById(id).select('user_id').lean();
-            if (!review) {
-                return res.status(404).json({ error: 'Review not found' });
-            }
             const isOwnReview = review.user_id.toString() === req.user._id.toString();
             const managedUser = isOwnReview ? true : await mongoose.model('User').findOne({
                 _id: review.user_id,
@@ -872,16 +879,29 @@ const verifyReview = async (req, res) => {
             }
         }
 
-        // Mark the review as verified
-        const updated = await Review.findOneAndUpdate(
-            { _id: id },
-            {
+        if (!shouldVerify && review.is_paid) {
+            return res.status(400).json({ error: 'Paid review entries cannot be unverified. Mark it unpaid first.' });
+        }
+
+        const update = shouldVerify
+            ? {
                 $set: {
                     is_verified: true,
                     verified_at: new Date(),
                     verified_by: req.user._id,
                 }
-            },
+            }
+            : {
+                $set: {
+                    is_verified: false,
+                    verified_at: null,
+                    verified_by: null,
+                }
+            };
+
+        const updated = await Review.findOneAndUpdate(
+            { _id: id },
+            update,
             { returnDocument: 'after', runValidators: true }
         )
             .populate('verified_by', 'username email role')
@@ -891,15 +911,15 @@ const verifyReview = async (req, res) => {
             return res.status(404).json({ error: 'Review not found' });
         }
 
-        console.log(`Review ${id} verified by user ${req.user._id} at ${new Date().toISOString()}`);
-
-        return res.status(200).json({ message: 'Review verified successfully', review: updated });
+        return res.status(200).json({
+            message: shouldVerify ? 'Review verified successfully' : 'Review unverified successfully',
+            review: updated
+        });
     } catch (error) {
         console.error('Verify Review Error:', error);
         return res.status(500).json({ error: 'Internal Server Error' });
     }
 }
-
 module.exports = {
     addReview,
     editReview,
