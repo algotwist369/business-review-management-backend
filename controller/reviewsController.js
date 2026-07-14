@@ -323,7 +323,7 @@ const getReviewsByUser = async (req, res) => {
         if (location) {
             businessMatchStage['business.location'] = { $regex: location, $options: 'i' };
         }
-        console.log('🔍 businessMatchStage:', businessMatchStage);
+        console.log('businessMatchStage:', businessMatchStage);
 
         // Payment and verification filters
         let paymentMatchStage = {};
@@ -382,8 +382,8 @@ const getReviewsByUser = async (req, res) => {
             },
         ];
         const debugData1 = await Review.aggregate(debugPipeline1);
-        console.log('🔍 Debug1 after $lookup (before $unwind and $match):', debugData1.slice(0, 3));
-        console.log('🔍 Debug1 data length:', debugData1.length);
+        console.log('ðŸ” Debug1 after $lookup (before $unwind and $match):', debugData1.slice(0, 3));
+        console.log('ðŸ” Debug1 data length:', debugData1.length);
 
         const debugPipeline2 = [
             ...debugPipeline1,
@@ -391,8 +391,8 @@ const getReviewsByUser = async (req, res) => {
             { $match: businessMatchStage },
         ];
         const debugData2 = await Review.aggregate(debugPipeline2);
-        console.log('🔍 Debug2 after $unwind and $match:', debugData2.slice(0, 3));
-        console.log('🔍 Debug2 data length:', debugData2.length);
+        console.log('ðŸ” Debug2 after $unwind and $match:', debugData2.slice(0, 3));
+        console.log('ðŸ” Debug2 data length:', debugData2.length);
 
         // Pipeline for totals
         const totalsPipeline = [
@@ -511,9 +511,9 @@ const getReviewsByUser = async (req, res) => {
             Review.aggregate(reviewsPipeline)
         ]);
 
-        console.log('🔍 totals pipeline result:', totals);
-        console.log('🔍 reviews pipeline result length:', reviews.length);
-        console.log('🔍 reviews pipeline first 2:', reviews.slice(0, 2));
+        console.log('ðŸ” totals pipeline result:', totals);
+        console.log('ðŸ” reviews pipeline result length:', reviews.length);
+        console.log('ðŸ” reviews pipeline first 2:', reviews.slice(0, 2));
 
         const userStats = totals[0] || {
             total_reviews: 0,
@@ -542,7 +542,7 @@ const getReviewsByUser = async (req, res) => {
             data: reviews,
         };
 
-        console.log('🔍 final response data:', responseData);
+        console.log('ðŸ” final response data:', responseData);
 
         return res.status(200).json(responseData);
 
@@ -656,41 +656,59 @@ const markAsPaidCustomDate = async (req, res) => {
         }
         const query = await buildDateRangePaymentQuery(req.user, startDate, endDate, userId);
 
-        const reviews = await Review.find(query).select('_id review_count is_verified').lean();
+        const reviews = await Review.find(query).select('_id review_count is_verified is_paid').lean();
 
         if (!reviews.length) {
-            return res.status(404).json({ error: 'Review not found' });
+            return res.status(404).json({ error: 'No review entries found in the selected date range' });
         }
 
-        const unverifiedCount = reviews.filter(review => !review.is_verified).length;
-        if (unverifiedCount > 0) {
-            return res.status(400).json({ error: `${unverifiedCount} review entries must be verified before marking this range as paid` });
-        }
-
+        const verifiedReviews = reviews.filter(review => review.is_verified);
+        const skippedUnverifiedReviews = reviews.filter(review => !review.is_verified);
         const paidAt = new Date();
-        const paidReviewCount = reviews.reduce((sum, review) => sum + (Number(review.review_count) || 0), 0);
+        const paidReviewCount = verifiedReviews.reduce((sum, review) => sum + (Number(review.review_count) || 0), 0);
+        const skippedUnverifiedReviewCount = skippedUnverifiedReviews.reduce((sum, review) => sum + (Number(review.review_count) || 0), 0);
         const totalAmount = paidReviewCount * perReviewPrice;
-        const updated = await Review.bulkWrite(
-            reviews.map((review) => ({
-                updateOne: {
-                    filter: { _id: review._id },
-                    update: {
-                        $set: {
-                            is_paid: true,
-                            paid_at: paidAt,
-                            paid_review_count: review.review_count,
-                            paid_review_price: perReviewPrice,
-                            paid_amount: review.review_count * perReviewPrice,
+        let updated = { matchedCount: 0, modifiedCount: 0 };
+
+        if (verifiedReviews.length) {
+            updated = await Review.bulkWrite(
+                verifiedReviews.map((review) => ({
+                    updateOne: {
+                        filter: { _id: review._id },
+                        update: {
+                            $set: {
+                                is_paid: true,
+                                paid_at: paidAt,
+                                paid_review_count: review.review_count,
+                                paid_review_price: perReviewPrice,
+                                paid_amount: review.review_count * perReviewPrice,
+                            },
                         },
                     },
-                },
-            }))
-        );
+                })),
+                { ordered: false }
+            );
+        }
+
+        const messageParts = [];
+        if (verifiedReviews.length) {
+            messageParts.push(`${verifiedReviews.length} verified review entr${verifiedReviews.length === 1 ? 'y was' : 'ies were'} marked as paid`);
+        } else {
+            messageParts.push('No verified review entries were found to mark as paid');
+        }
+        if (skippedUnverifiedReviews.length) {
+            messageParts.push(`${skippedUnverifiedReviews.length} unverified entr${skippedUnverifiedReviews.length === 1 ? 'y was' : 'ies were'} skipped`);
+        }
 
         return res.status(200).json({
-            matchedCount: updated.matchedCount,
-            modifiedCount: updated.modifiedCount,
+            message: `${messageParts.join('. ')}.`,
+            matchedCount: updated.matchedCount || 0,
+            modifiedCount: updated.modifiedCount || 0,
+            totalEntries: reviews.length,
+            paidEntryCount: verifiedReviews.length,
+            skippedUnverifiedEntries: skippedUnverifiedReviews.length,
             paidReviewCount,
+            skippedUnverifiedReviewCount,
             perReviewPrice,
             totalAmount,
         });
