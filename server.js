@@ -43,6 +43,8 @@ if (cluster.isPrimary && useCluster) {
     const allowlist = process.env.CORS_ORIGIN
         ? process.env.CORS_ORIGIN.split(',').map(origin => origin.trim())
         : [
+            'https://omega.d0s369.co.in',
+            'https://www.omega.d0s369.co.in',
             'https://business-review-management-frontend.vercel.app',
             'http://localhost:5173',
             'https://dos-omega.vercel.app'
