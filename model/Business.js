@@ -6,7 +6,6 @@ const businessSchema = new mongoose.Schema(
             type: String,
             required: true,
             trim: true,
-            unique: true,
             index: true,
         },
 
@@ -19,7 +18,6 @@ const businessSchema = new mongoose.Schema(
             type: String,
             trim: true,
             unique: true,
-            index: true,
         },
 
         business_link: {
@@ -35,6 +33,13 @@ const businessSchema = new mongoose.Schema(
         },
 
         is_active: {
+            type: Boolean,
+            default: true,
+            index: true,
+        },
+
+        // Show as NEW for first 7 days
+        is_new: {
             type: Boolean,
             default: true,
             index: true,

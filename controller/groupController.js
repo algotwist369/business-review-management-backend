@@ -20,10 +20,13 @@ const createGroup = async (req, res) => {
             return res.status(400).json({ error: 'Invalid business ID provided' });
         }
 
-        const assignedSet = toStringSet(req.user.assigned_businesses);
-        const hasUnassignedId = normalizedIds.some((id) => !assignedSet.has(id));
-        if (hasUnassignedId) {
-            return res.status(403).json({ error: 'You can only group your assigned businesses' });
+        const isUser = req.user && req.user.role === 'user';
+        if (isUser) {
+            const assignedSet = toStringSet(req.user.assigned_businesses);
+            const hasUnassignedId = normalizedIds.some((id) => !assignedSet.has(id));
+            if (hasUnassignedId) {
+                return res.status(403).json({ error: 'You can only group your assigned businesses' });
+            }
         }
 
         if (normalizedIds.length > 0) {
@@ -74,9 +77,12 @@ const addBusinessToGroup = async (req, res) => {
             return res.status(400).json({ error: 'Invalid ID provided' });
         }
 
-        const assignedSet = toStringSet(req.user.assigned_businesses);
-        if (!assignedSet.has(businessId.toString())) {
-            return res.status(403).json({ error: 'You can only group your assigned businesses' });
+        const isUser = req.user && req.user.role === 'user';
+        if (isUser) {
+            const assignedSet = toStringSet(req.user.assigned_businesses);
+            if (!assignedSet.has(businessId.toString())) {
+                return res.status(403).json({ error: 'You can only group your assigned businesses' });
+            }
         }
 
         const business = await Business.exists({ _id: businessId });

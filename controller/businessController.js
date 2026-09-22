@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const Business = require('../model/Business');
+const User = require('../model/user');
 
 // add business
 const addBusiness = async (req, res) => {
@@ -18,12 +19,12 @@ const addBusiness = async (req, res) => {
 
         // Check duplicate (lean = less memory)
         const existingBusiness = await Business.findOne({
-            $or: [{ short_code }],
+            short_code,
         }).lean();
 
         if (existingBusiness) {
             return res.status(400).json({
-                error: 'Business name or short code already exists',
+                error: 'Short code already exists',
             });
         }
 
@@ -51,6 +52,7 @@ const addBusiness = async (req, res) => {
         return res.status(500).json({ error: 'Internal Server Error' });
     }
 };
+
 // gett all business
 const getAllBusiness = async (req, res) => {
     try {
@@ -58,23 +60,27 @@ const getAllBusiness = async (req, res) => {
             return res.status(403).json({ error: 'Unauthorized access' });
         }
 
-        const { 
-            page = 1, 
-            limit = 10, 
-            search = '', 
-            business_link = '', 
-            is_active, 
+        const {
+            page = 1,
+            limit = 10,
+            search = '',
+            business_link = '',
+            is_active,
             has_link,
-            sortBy = 'createdAt', 
-            sortOrder = 'desc' 
+            sortBy: rawSortBy = 'createdAt',
+            sortOrder: rawSortOrder = 'desc'
         } = req.query;
+
+        const allowedSortFields = ['business_name', 'location', 'short_code', 'business_link', 'is_active', 'createdAt', 'updatedAt', 'business_link_presence'];
+        const sortBy = allowedSortFields.includes(rawSortBy) ? rawSortBy : 'createdAt';
+        const sortOrder = ['asc', 'desc'].includes(rawSortOrder) ? rawSortOrder : 'desc';
         const skip = (Number(page) - 1) * Number(limit);
 
         // Filter: Admin/Super Admin sees all, users only see assigned & active
         let filter = {};
         if (req.user.role === 'user') {
-            const assignedIds = Array.isArray(req.user.assigned_businesses) 
-                ? req.user.assigned_businesses 
+            const assignedIds = Array.isArray(req.user.assigned_businesses)
+                ? req.user.assigned_businesses
                 : [];
             filter = {
                 _id: { $in: assignedIds },
@@ -125,11 +131,53 @@ const getAllBusiness = async (req, res) => {
             sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
         }
 
-        const businesses = await Business.find(filter)
+        let businesses = await Business.find(filter)
+            .populate('user_id', 'username email role')
             .sort(sort)
             .skip(skip)
             .limit(Number(limit))
             .lean(); // low memory usage
+
+        if (req.user.role === 'admin' || req.user.role === 'super_admin') {
+            const businessIds = businesses.map(business => business._id);
+            const assignedUsers = await User.find({
+                role: 'user',
+                is_deleted: false,
+                assigned_businesses: { $in: businessIds },
+                ...(req.user.role === 'admin' ? { managed_by: req.user._id } : {})
+            })
+                .select('_id username email assigned_businesses')
+                .lean();
+
+            const usersByBusinessId = new Map();
+            assignedUsers.forEach(user => {
+                (user.assigned_businesses || []).forEach(businessId => {
+                    const key = businessId.toString();
+                    if (!usersByBusinessId.has(key)) usersByBusinessId.set(key, []);
+                    usersByBusinessId.get(key).push({
+                        _id: user._id,
+                        username: user.username,
+                        email: user.email
+                    });
+                });
+            });
+
+            businesses = businesses.map(business => {
+                const assignedForBusiness = usersByBusinessId.get(business._id.toString()) || [];
+                const populatedCreator = business.user_id && (business.user_id.username || business.user_id.email)
+                    ? business.user_id
+                    : null;
+                const fallbackCreator = assignedForBusiness[0]
+                    ? { ...assignedForBusiness[0], role: 'user', is_legacy_fallback: true }
+                    : null;
+
+                return {
+                    ...business,
+                    assigned_users: assignedForBusiness,
+                    added_by: populatedCreator || fallbackCreator,
+                };
+            });
+        }
 
         const total = await Business.countDocuments(filter);
 
@@ -158,12 +206,56 @@ const editBusiness = async (req, res) => {
             return res.status(400).json({ error: 'Invalid business ID' });
         }
 
+        const allowedFields = [
+            'business_name',
+            'location',
+            'short_code',
+            'business_link',
+            'is_active',
+            'is_new',
+            'user_id',
+        ];
+
+        const updateData = {};
+
+        for (const field of allowedFields) {
+            if (req.body[field] !== undefined) {
+                updateData[field] = req.body[field];
+            }
+        }
+
+        if (!Object.keys(updateData).length) {
+            return res.status(400).json({ error: 'No update data provided' });
+        }
+
+        if (updateData.business_name) {
+            updateData.business_name = updateData.business_name.trim();
+        }
+
+        if (updateData.short_code) {
+            const shortCode = updateData.short_code.trim().toUpperCase();
+
+            const shortCodeExists = await Business.findOne({
+                short_code: shortCode,
+                _id: { $ne: id },
+            }).lean();
+
+            if (shortCodeExists) {
+                return res.status(400).json({
+                    error: 'Short code already exists',
+                });
+            }
+
+            updateData.short_code = shortCode;
+        }
+
         const updatedBusiness = await Business.findByIdAndUpdate(
             id,
-            { $set: req.body },
+            { $set: updateData },
             {
-                new: true,
+                returnDocument: "after",
                 runValidators: true,
+                context: 'query',
             }
         ).lean();
 
@@ -175,8 +267,17 @@ const editBusiness = async (req, res) => {
 
     } catch (error) {
         if (error.code === 11000) {
+            console.log('Duplicate Error Key Pattern:', error.keyPattern);
+            console.log('Duplicate Error Key Value:', error.keyValue);
+
+            const field = Object.keys(error.keyPattern || {})[0];
+
             return res.status(400).json({
-                error: 'Business name or short code already exists',
+                error: field === 'short_code'
+                    ? 'Short code already exists'
+                    : `${field || 'Field'} already exists`,
+                field,
+                value: error.keyValue?.[field],
             });
         }
 
@@ -233,7 +334,7 @@ const updateBusinessStatus = async (req, res) => {
         const updated = await Business.findByIdAndUpdate(
             id,
             { $set: { is_active } },
-            { new: true }
+            { returnDocument: "after" }
         ).lean();
 
         if (!updated) {
@@ -255,3 +356,5 @@ module.exports = {
     deleteBusiness,
     updateBusinessStatus
 }
+
+

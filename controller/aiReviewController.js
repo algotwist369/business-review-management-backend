@@ -49,7 +49,10 @@ const getTargetUserForGrant = async (actor, userId) => {
 
     if (actor.role === 'admin') {
         const actorId = actor._id.toString();
-        if (target.role !== 'user' || target.managed_by?.toString() !== actorId) {
+        const isManaged = Array.isArray(target.managed_by)
+            ? target.managed_by.some(id => id.toString() === actorId)
+            : target.managed_by?.toString() === actorId;
+        if (target.role !== 'user' || !isManaged) {
             return { error: 'Admin can grant AI review access to managed users only', status: 403 };
         }
         return { target };
@@ -198,7 +201,7 @@ const updatePromptOption = async (req, res) => {
         const option = await ReviewPromptOption.findOneAndUpdate(
             { _id: id, type },
             { $set: updateData },
-            { new: true, runValidators: true }
+            { returnDocument: "after", runValidators: true }
         ).lean();
 
         if (!option) {
@@ -225,7 +228,7 @@ const deletePromptOption = async (req, res) => {
         const option = await ReviewPromptOption.findOneAndUpdate(
             { _id: id, type },
             { $set: { is_active: false, updated_by: req.user._id } },
-            { new: true }
+            { returnDocument: "after" }
         ).lean();
 
         if (!option) {
@@ -300,7 +303,7 @@ const updateDataset = async (req, res) => {
         const dataset = await ReviewDataset.findByIdAndUpdate(
             id,
             { $set: updateData },
-            { new: true, runValidators: true }
+            { returnDocument: "after", runValidators: true }
         ).lean();
 
         if (!dataset) {
@@ -324,7 +327,7 @@ const deleteDataset = async (req, res) => {
         const dataset = await ReviewDataset.findByIdAndUpdate(
             id,
             { $set: { is_active: false, updated_by: req.user._id } },
-            { new: true }
+            { returnDocument: "after" }
         ).lean();
 
         if (!dataset) {
@@ -402,7 +405,7 @@ const updateLanguage = async (req, res) => {
         const language = await ReviewLanguage.findByIdAndUpdate(
             id,
             { $set: updateData },
-            { new: true, runValidators: true }
+            { returnDocument: "after", runValidators: true }
         ).lean();
 
         if (!language) {
@@ -429,7 +432,7 @@ const deleteLanguage = async (req, res) => {
         const language = await ReviewLanguage.findByIdAndUpdate(
             id,
             { $set: { is_active: false, updated_by: req.user._id } },
-            { new: true }
+            { returnDocument: "after" }
         ).lean();
 
         if (!language) {
@@ -603,7 +606,7 @@ const saveFeedback = async (req, res) => {
                     feedback_at: new Date(),
                 },
             },
-            { new: true }
+            { returnDocument: "after" }
         ).lean();
 
         if (!generation) {

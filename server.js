@@ -5,7 +5,9 @@ const process = require('process');
 
 const numCPUs = os.cpus().length;
 
-if (cluster.isPrimary) {
+const useCluster = process.env.NODE_ENV === 'production' && process.env.ENABLE_CLUSTER === 'true';
+
+if (cluster.isPrimary && useCluster) {
     console.log(`Primary process ${process.pid} is running`);
     console.log(`Forking ${numCPUs} workers...\n`);
 
@@ -23,12 +25,15 @@ if (cluster.isPrimary) {
 } else {
     // Worker Process
     const express = require('express');
+    const mongoose = require('mongoose');
     const connectDB = require('./config/db');
     const { connectReviewDB } = require('./config/reviewDb');
+    const { connectSupportDB } = require('./config/supportDb');
     const cors = require('cors');
     const helmet = require('helmet');
     const compression = require('compression');
     const morgan = require('morgan')
+    const apiMonitoringMiddleware = require('./middlewares/apiMonitoring.middleware');
 
     const app = express();
 
@@ -38,8 +43,11 @@ if (cluster.isPrimary) {
     const allowlist = process.env.CORS_ORIGIN
         ? process.env.CORS_ORIGIN.split(',').map(origin => origin.trim())
         : [
+            'https://omega.d0s369.co.in',
+            'https://www.omega.d0s369.co.in',
             'https://business-review-management-frontend.vercel.app',
-            'http://localhost:5173'
+            'http://localhost:5173',
+            'https://dos-omega.vercel.app'
         ];
 
     app.use(cors({
@@ -61,6 +69,9 @@ if (cluster.isPrimary) {
     app.use(express.json({ limit: '10mb' }));
     app.use(express.urlencoded({ extended: true }));
 
+    // API Monitoring Middleware
+    app.use(apiMonitoringMiddleware);
+
 
     // ==========================
     // 🗄 MongoDB Connection
@@ -69,16 +80,39 @@ if (cluster.isPrimary) {
     connectReviewDB().catch((error) => {
         console.error('Review MongoDB connection error:', error);
     });
+    connectSupportDB().catch((error) => {
+        console.error('Support MongoDB connection error:', error);
+    });
+
+    // Start cron jobs only on the first worker or if not in cluster mode to avoid duplicate runs
+    if (!cluster.isWorker || (cluster.worker && cluster.worker.id === 1)) {
+        const startBusinessNewStatusJob = require('./jobs/businessNewStatus.job');
+        startBusinessNewStatusJob();
+        
+        const startMonitoringJob = require('./jobs/monitoring.job');
+        startMonitoringJob();
+    }
 
     // ==========================
     // 📦 Routes
     // ==========================
     app.use('/api/users', require('./routes/userRoute'));
     app.use('/api/super-admin', require('./routes/superAdminRoute'));
+    app.use('/api/monitoring', require('./routes/monitoringRoute'));
     app.use('/api/business', require('./routes/businessRoute'));
     app.use('/api/reviews', require('./routes/reviewRoute'));
     app.use('/api/groups', require('./routes/groupRoute'));
     app.use('/api/ai-reviews', require('./routes/aiReviewRoute'));
+    app.use('/api/gbp-updates', require('./routes/gbpUpdatesRoute'));
+    app.use('/api/social-media', require('./routes/socialMediaRoute'));
+    app.use('/api/canva', require('./routes/canvaRoute'));
+    app.use('/api/js-team', require('./routes/jsTeamRoute'));
+    app.use('/api/web-dev', require('./routes/webDevRoute'));
+    app.use('/api/leads-management', require('./routes/leadsRoute'));
+    app.use('/api/google-ads', require('./routes/googleAdsRoute'));
+    app.use('/api/notifications', require('./routes/notificationRoute'));
+    app.use('/api/support', require('./routes/supportRoute'));
+    app.use('/api/chat', require('./routes/chatRoute'));
 
 
     // ==========================
@@ -109,6 +143,9 @@ if (cluster.isPrimary) {
     const server = app.listen(PORT, () => {
         console.log(`Worker ${process.pid} running on port ${PORT}`);
     });
+
+    const { initSocket } = require('./services/socketService');
+    initSocket(server);
 
 
     // ==========================

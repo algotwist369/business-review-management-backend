@@ -3,6 +3,9 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const User = require('../model/user');
 const Reviews = require('../model/review');
+const Business = require('../model/Business');
+const Notification = require('../model/Notification');
+const { createAlert } = require('../services/monitoring.service');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'secret';
 const JWT_EXPIRES = '7d';
@@ -15,6 +18,9 @@ const buildAuthResponse = (user) => ({
     email: user.email,
     username: user.username,
     role: user.role,
+    scopes: user.scopes || ['review_management'],
+    assigned_businesses: user.assigned_businesses || [],
+    team_type: user.team_type || 'all',
     ai_review_access: user.role === 'super_admin' || !!user.ai_review_access,
     has_password: !!user.password_hash,
 });
@@ -27,6 +33,9 @@ const signToken = (user) => jwt.sign(
 
 const validatePassword = (password) =>
     typeof password === 'string' && password.length >= PASSWORD_MIN_LENGTH;
+
+const validateEmail = (email) =>
+    typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
 // signup or login with google 
 const googleAuth = async (req, res) => {
@@ -59,6 +68,28 @@ const googleAuth = async (req, res) => {
             }
             user.last_login = new Date();
             await user.save();
+        }
+
+        // Reset failed login attempts on successful login
+        if (user.failed_login_attempts > 0) {
+            user.failed_login_attempts = 0;
+            await user.save();
+        }
+
+        // Create alert for admin/super admin login
+        if (user.role === 'admin' || user.role === 'super_admin') {
+            await createAlert({
+                type: 'ADMIN_SUSPICIOUS_LOGIN',
+                message: `${user.role} login for ${user.email}`,
+                severity: 'LOW',
+                metadata: {
+                    email: user.email,
+                    user_id: user._id,
+                    role: user.role,
+                    ip: req.ip,
+                    user_agent: req.headers['user-agent'],
+                },
+            });
         }
 
         const token = signToken(user);
@@ -131,11 +162,51 @@ const login = async (req, res) => {
 
         const passwordMatches = await bcrypt.compare(password, user.password_hash);
         if (!passwordMatches) {
+            // Increment failed login attempts
+            user.failed_login_attempts = (user.failed_login_attempts || 0) + 1;
+            user.last_failed_login = new Date();
+            await user.save();
+
+            // Check if failed attempts exceed threshold (e.g., 5)
+            if (user.failed_login_attempts >= 5) {
+                await createAlert({
+                    type: 'ADMIN_SUSPICIOUS_LOGIN',
+                    message: `Suspicious login activity: ${user.failed_login_attempts} failed attempts for ${user.email}`,
+                    severity: 'CRITICAL',
+                    metadata: {
+                        email: user.email,
+                        user_id: user._id,
+                        role: user.role,
+                        failed_attempts: user.failed_login_attempts,
+                        ip: req.ip,
+                        user_agent: req.headers['user-agent'],
+                    },
+                });
+            }
+
             return res.status(401).json({ error: 'Invalid email or password' });
         }
 
+        // Reset failed login attempts on successful login
+        user.failed_login_attempts = 0;
         user.last_login = new Date();
         await user.save();
+
+        // Create alert for admin/super admin login
+        if (user.role === 'admin' || user.role === 'super_admin') {
+            await createAlert({
+                type: 'ADMIN_SUSPICIOUS_LOGIN',
+                message: `${user.role} login for ${user.email}`,
+                severity: 'LOW',
+                metadata: {
+                    email: user.email,
+                    user_id: user._id,
+                    role: user.role,
+                    ip: req.ip,
+                    user_agent: req.headers['user-agent'],
+                },
+            });
+        }
 
         return res.status(200).json({
             message: 'Authentication successful',
@@ -203,6 +274,7 @@ const updatePassword = async (req, res) => {
     }
 };
 
+
 // logout
 const logout = async (req, res) => {
     return res.status(200).json({
@@ -213,7 +285,7 @@ const logout = async (req, res) => {
 // get all users - admin/super_admin
 const getAllUsers = async (req, res) => {
     try {
-        const { page = 1, limit = 20 } = req.query;
+        const { page = 1, limit = 20, is_active, team_type } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
 
         // Filter: Super admin sees all (except themselves), admin sees only assigned users
@@ -221,6 +293,26 @@ const getAllUsers = async (req, res) => {
             is_deleted: false,
             _id: { $ne: new mongoose.Types.ObjectId(req.user.id || req.user._id) }
         };
+
+        if (is_active !== undefined) {
+            filter.is_active = is_active === 'true';
+        }
+
+        if (team_type && team_type !== 'all') {
+            let scope;
+            if (team_type === 'review management team') scope = 'review_management';
+            else if (team_type === 'social media team') scope = 'social_media_management';
+            else if (team_type === 'gbp record management team') scope = 'gbp_record_management';
+            else if (team_type === 'jd team') scope = 'jd_management';
+            else if (team_type === 'it development team') scope = 'web_dev_management';
+            else if (team_type === 'leads management team') scope = 'leads_management';
+
+            if (scope) {
+                filter.scopes = scope;
+            } else {
+                filter.team_type = team_type;
+            }
+        }
 
         if (req.user.role === 'admin') {
             filter.managed_by = new mongoose.Types.ObjectId(req.user.id || req.user._id);
@@ -335,6 +427,82 @@ const updateUserStatus = async (req, res) => {
     }
 };
 
+
+// update username/email/password - super_admin only
+const updateUserCredentials = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { username, email, password } = req.body;
+
+        if (req.user.role !== 'super_admin') {
+            return res.status(403).json({ error: 'Super Admin only' });
+        }
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ error: 'Invalid user ID' });
+        }
+
+        const updates = {};
+
+        if (username !== undefined) {
+            const cleanUsername = String(username).trim();
+            if (cleanUsername.length < 3 || cleanUsername.length > 50) {
+                return res.status(400).json({ error: 'Username must be between 3 and 50 characters' });
+            }
+            updates.username = cleanUsername;
+        }
+
+        if (email !== undefined) {
+            const normalizedEmail = normalizeEmail(email);
+            if (!validateEmail(normalizedEmail)) {
+                return res.status(400).json({ error: 'Valid email is required' });
+            }
+
+            const emailOwner = await User.findOne({
+                email: normalizedEmail,
+                _id: { $ne: id },
+                is_deleted: false
+            }).select('_id').lean();
+
+            if (emailOwner) {
+                return res.status(409).json({ error: 'Email is already used by another user' });
+            }
+
+            updates.email = normalizedEmail;
+        }
+
+        if (password !== undefined && String(password).trim() !== '') {
+            if (!validatePassword(password)) {
+                return res.status(400).json({ error: `Password must be at least ${PASSWORD_MIN_LENGTH} characters` });
+            }
+            updates.password_hash = await bcrypt.hash(password, 12);
+            updates.failed_login_attempts = 0;
+            updates.last_failed_login = null;
+        }
+
+        if (Object.keys(updates).length === 0) {
+            return res.status(400).json({ error: 'No valid fields provided for update' });
+        }
+
+        const updated = await User.findOneAndUpdate(
+            { _id: id, is_deleted: false },
+            { $set: updates },
+            { returnDocument: 'after', runValidators: true }
+        ).select('-password_hash -__v').lean();
+
+        if (!updated) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        return res.status(200).json(updated);
+    } catch (error) {
+        if (error.code === 11000) {
+            return res.status(409).json({ error: 'Email is already used by another user' });
+        }
+        console.error('Update User Credentials Error:', error);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
 // delete user (admin/super_admin)
 const deleteUser = async (req, res) => {
     try {
@@ -369,6 +537,8 @@ const deleteUser = async (req, res) => {
     }
 };
 
+
+
 // assign businesses to user (admin/super_admin)
 const assignBusinessesToUser = async (req, res) => {
     try {
@@ -394,14 +564,48 @@ const assignBusinessesToUser = async (req, res) => {
             filter.managed_by = req.user.id || req.user._id;
         }
 
+        // Fetch current user assignments to detect new additions
+        const existingUser = await User.findOne(filter).select('assigned_businesses').lean();
+        if (!existingUser) {
+            return res.status(404).json({ error: 'User not found or access denied' });
+        }
+
+        const prevBusinesses = (existingUser.assigned_businesses || []).map(b => b.toString());
+        const newlyAdded = businessIds.filter(bid => !prevBusinesses.includes(bid.toString()));
+
         const updatedUser = await User.findOneAndUpdate(
             filter,
             { $set: { assigned_businesses: businessIds } },
             { returnDocument: 'after' }
         ).select('-__v -password_hash').lean();
 
-        if (!updatedUser) {
-            return res.status(404).json({ error: 'User not found or access denied' });
+        // Check for new business assignments to trigger alerts
+        if (newlyAdded.length > 0) {
+            const newAssignedNewBusinesses = await Business.find({
+                _id: { $in: newlyAdded },
+                is_returnDocument: "after"
+            }).lean();
+
+            for (const biz of newAssignedNewBusinesses) {
+                // Create Notification in DB
+                const notification = await Notification.create({
+                    user_id: id,
+                    title: 'New Business Assigned',
+                    message: `You have been assigned to a new business: ${biz.business_name}. Please complete all workspace tasks within the 7-day introductory period.`,
+                    type: 'assignment',
+                    business_id: biz._id,
+                    triggered_by_user_id: req.user.id || req.user._id
+                });
+
+                // Populate and emit real-time alert via socketService
+                const populatedNotification = await Notification.findById(notification._id)
+                    .populate('triggered_by_user_id', 'username email')
+                    .populate('business_id', 'business_name location')
+                    .lean();
+
+                const { sendNotification } = require('../services/socketService');
+                sendNotification(id, populatedNotification);
+            }
         }
 
         return res.status(200).json({
@@ -411,6 +615,192 @@ const assignBusinessesToUser = async (req, res) => {
 
     } catch (error) {
         console.error('Assign Businesses Error:', error);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
+// assign scopes to user (admin/super_admin)
+const assignScopesToUser = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { scopes } = req.body; // Array of scopes
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ error: 'Invalid user ID' });
+        }
+
+        if (!Array.isArray(scopes)) {
+            return res.status(400).json({ error: 'scopes must be an array' });
+        }
+
+        // Validate all scopes
+        const validScopes = ['review_management', 'gbp_record_management', 'social_media_management', 'jd_management', 'leads_management', 'web_dev_management'];
+        const isValidScopes = scopes.every(scope => validScopes.includes(scope));
+        if (!isValidScopes) {
+            return res.status(400).json({ error: 'One or more invalid scopes' });
+        }
+
+        let filter = { _id: id };
+        if (req.user.role === 'admin') {
+            filter.managed_by = req.user.id || req.user._id;
+        }
+
+        // Automatically map scopes to the correct team type
+        let team_type = 'all';
+        if (scopes.length === 1) {
+            const sc = scopes[0];
+            if (sc === 'review_management') team_type = 'review management team';
+            else if (sc === 'gbp_record_management') team_type = 'gbp record management team';
+            else if (sc === 'social_media_management') team_type = 'social media team';
+            else if (sc === 'jd_management') team_type = 'jd team';
+            else if (sc === 'leads_management') team_type = 'leads management team';
+            else if (sc === 'web_dev_management') team_type = 'it development team';
+        } else {
+            team_type = 'all';
+        }
+
+        const updatedUser = await User.findOneAndUpdate(
+            filter,
+            { $set: { scopes: scopes, team_type: team_type } },
+            { returnDocument: 'after' }
+        ).select('-__v -password_hash').lean();
+
+        if (!updatedUser) {
+            return res.status(404).json({ error: 'User not found or access denied' });
+        }
+
+        return res.status(200).json({
+            message: 'Scopes assigned successfully',
+            user: updatedUser
+        });
+
+    } catch (error) {
+        console.error('Assign Scopes Error:', error);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
+// assign team type to user (admin/super_admin)
+const assignTeamTypeToUser = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { team_type } = req.body;
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ error: 'Invalid user ID' });
+        }
+
+        const validTeamTypes = [
+            'social media team',
+            'jd team',
+            'review management team',
+            'gbp record management team',
+            'leads management team',
+            'it development team',
+            'all'
+        ];
+
+        if (!validTeamTypes.includes(team_type)) {
+            return res.status(400).json({ error: 'Invalid team type' });
+        }
+
+        let filter = { _id: id };
+        if (req.user.role === 'admin') {
+            filter.managed_by = req.user.id || req.user._id;
+        }
+
+        // Automatically map team type to corresponding scopes
+        let scopes = [];
+        if (team_type === 'review management team') {
+            scopes = ['review_management'];
+        } else if (team_type === 'gbp record management team') {
+            scopes = ['gbp_record_management'];
+        } else if (team_type === 'social media team') {
+            scopes = ['social_media_management'];
+        } else if (team_type === 'jd team') {
+            scopes = ['jd_management'];
+        } else if (team_type === 'leads management team') {
+            scopes = ['leads_management'];
+        } else if (team_type === 'it development team') {
+            scopes = ['web_dev_management'];
+        } else if (team_type === 'all') {
+            scopes = ['review_management', 'gbp_record_management', 'social_media_management', 'jd_management', 'leads_management', 'web_dev_management'];
+        }
+
+        const updatedUser = await User.findOneAndUpdate(
+            filter,
+            { $set: { team_type: team_type, scopes: scopes } },
+            { returnDocument: 'after' }
+        ).select('-__v -password_hash').lean();
+
+        if (!updatedUser) {
+            return res.status(404).json({ error: 'User not found or access denied' });
+        }
+
+        return res.status(200).json({
+            message: 'Team type assigned successfully',
+            user: updatedUser
+        });
+
+    } catch (error) {
+        console.error('Assign Team Type Error:', error);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
+const globalSearch = async (req, res) => {
+    try {
+        const { q = '' } = req.query;
+        if (!q || !q.trim()) {
+            return res.status(200).json({ users: [], businesses: [] });
+        }
+
+        const queryStr = q.trim();
+
+        // 1. Search Users (Admins can only find their managed users, standard users cannot search users)
+        let users = [];
+        if (req.user.role === 'admin' || req.user.role === 'super_admin') {
+            let userFilter = {
+                is_deleted: false,
+                $or: [
+                    { username: { $regex: queryStr, $options: 'i' } },
+                    { email: { $regex: queryStr, $options: 'i' } }
+                ]
+            };
+            if (req.user.role === 'admin') {
+                userFilter.managed_by = req.user._id;
+            }
+
+            users = await User.find(userFilter)
+                .select('_id username email role scopes assigned_businesses')
+                .limit(5)
+                .lean();
+        }
+
+        // 2. Search Businesses (Standard users only search their assigned businesses)
+        let businessFilter = {
+            $or: [
+                { business_name: { $regex: queryStr, $options: 'i' } },
+                { location: { $regex: queryStr, $options: 'i' } },
+                { short_code: { $regex: queryStr, $options: 'i' } }
+            ]
+        };
+
+        if (req.user.role === 'user') {
+            const assignedIds = Array.isArray(req.user.assigned_businesses)
+                ? req.user.assigned_businesses
+                : [];
+            businessFilter._id = { $in: assignedIds };
+        }
+
+        const businesses = await Business.find(businessFilter)
+            .select('_id business_name location short_code business_link')
+            .limit(5)
+            .lean();
+
+        return res.status(200).json({ users, businesses });
+    } catch (error) {
+        console.error('Global Search Error:', error);
         return res.status(500).json({ error: 'Internal Server Error' });
     }
 };
@@ -425,6 +815,10 @@ module.exports = {
     getAllUsers,
     getUserById,
     updateUserStatus,
+    updateUserCredentials,
     deleteUser,
-    assignBusinessesToUser
+    assignBusinessesToUser,
+    assignScopesToUser,
+    assignTeamTypeToUser,
+    globalSearch
 }

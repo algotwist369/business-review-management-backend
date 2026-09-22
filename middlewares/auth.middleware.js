@@ -12,7 +12,7 @@ const authMiddleware = async (req, res, next) => {
         const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret');
 
         const user = await User.findById(decoded.id)
-            .select('_id email username role is_active is_deleted assigned_businesses managed_by ai_review_access');
+            .select('_id email username role is_active is_deleted assigned_businesses managed_by ai_review_access scopes');
 
         if (!user || !user.is_active || user.is_deleted) {
             return res.status(401).json({ error: 'Invalid or inactive user' });
