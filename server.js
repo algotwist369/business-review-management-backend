@@ -34,6 +34,8 @@ if (cluster.isPrimary && useCluster) {
     const helmet = require('helmet');
     const compression = require('compression');
     const morgan = require('morgan')
+    const path = require('path');
+    const fs = require('fs');
     const apiMonitoringMiddleware = require('./middlewares/apiMonitoring.middleware');
 
     const app = express();
@@ -72,6 +74,13 @@ if (cluster.isPrimary && useCluster) {
 
     // API Monitoring Middleware
     app.use(apiMonitoringMiddleware);
+
+    // Static downloads directory for desktop application builds
+    const downloadsPath = path.join(__dirname, 'downloads');
+    if (!fs.existsSync(downloadsPath)) {
+        fs.mkdirSync(downloadsPath, { recursive: true });
+    }
+    app.use('/downloads', express.static(downloadsPath));
 
 
     // ==========================

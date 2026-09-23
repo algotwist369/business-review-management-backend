@@ -1,2 +1,7 @@
 .env
 node_modules
+downloads/
+*.exe
+*.zip
+*.7z
+*.tar.gz
