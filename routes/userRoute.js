@@ -24,12 +24,17 @@ const adminMiddleware = require('../middlewares/admin.middleware');
 const superAdminMiddleware = require('../middlewares/superAdmin.middleware');
 
 
+const { getOnlineUsers } = require('../services/socketService');
+
 // Public
 router.post('/google-auth', googleAuth);
 router.post('/signup', signup);
 router.post('/login', login);
 router.post('/logout', authMiddleware, logout);
 router.get('/me', authMiddleware, getCurrentUser);
+router.get('/presence/online', authMiddleware, (req, res) => {
+    res.status(200).json({ onlineUserIds: getOnlineUsers() });
+});
 router.patch('/password', authMiddleware, updatePassword);
 
 

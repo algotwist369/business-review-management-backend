@@ -13,7 +13,11 @@ const initSocket = (server) => {
         cors: {
             origin: '*', // Adjust to specific frontend domain in production if needed
             methods: ['GET', 'POST'],
-        }
+        },
+        transports: ['websocket', 'polling'], // Persistent TCP WebSocket transport
+        pingTimeout: 20000,
+        pingInterval: 10000,
+        perMessageDeflate: false, // Low-latency direct TCP messaging without compression buffering
     });
 
     // Connection authentication middleware
@@ -41,6 +45,7 @@ const initSocket = (server) => {
 
     ioInstance.on('connection', (socket) => {
         const userId = socket.user._id.toString();
+        const isFirstConnection = !userConnections.has(userId) || userConnections.get(userId).length === 0;
         
         // Add connection
         if (!userConnections.has(userId)) {
@@ -48,6 +53,19 @@ const initSocket = (server) => {
         }
         userConnections.get(userId).push(socket.id);
         console.log(`[Socket] User ${userId} connected. Active sockets:`, userConnections.get(userId).length);
+
+        // Send current list of online users to the newly connected user
+        socket.emit('online_users', Array.from(userConnections.keys()));
+
+        // Broadcast to everyone that this user is now online
+        if (isFirstConnection) {
+            ioInstance.emit('user_status_changed', { userId, isOnline: true });
+        }
+
+        // Allow client to request fresh online list
+        socket.on('get_online_users', () => {
+            socket.emit('online_users', Array.from(userConnections.keys()));
+        });
 
         // Forward real-time typing events
         socket.on('typing', ({ recipientId, isTyping }) => {
@@ -91,6 +109,8 @@ const initSocket = (server) => {
                     userConnections.set(userId, sockets);
                 } else {
                     userConnections.delete(userId);
+                    // Broadcast to everyone that this user is now offline
+                    ioInstance.emit('user_status_changed', { userId, isOnline: false });
                 }
             }
             console.log(`[Socket] User ${userId} disconnected.`);
@@ -259,6 +279,19 @@ const sendGroupMessagesRead = (memberIds, groupId, userId) => {
     });
 };
 
+// Emit real-time task update to all connected clients
+const broadcastTaskUpdate = (data) => {
+    if (!ioInstance) {
+        console.warn('[Socket Warning] socketService not initialized yet');
+        return;
+    }
+    ioInstance.emit('task_updated', data);
+    console.log(`[Socket] Broadcasted task_updated: ${data?.action || 'generic'}`);
+};
+
+// Return array of currently online user IDs
+const getOnlineUsers = () => Array.from(userConnections.keys());
+
 module.exports = {
     initSocket,
     sendNotification,
@@ -272,4 +305,6 @@ module.exports = {
     sendGroupChatMessageUpdate,
     sendMessagesRead,
     sendGroupMessagesRead,
+    broadcastTaskUpdate,
+    getOnlineUsers,
 };

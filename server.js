@@ -29,6 +29,7 @@ if (cluster.isPrimary && useCluster) {
     const connectDB = require('./config/db');
     const { connectReviewDB } = require('./config/reviewDb');
     const { connectSupportDB } = require('./config/supportDb');
+    const { connectTaskDB, taskConnection } = require('./config/taskDb');
     const cors = require('cors');
     const helmet = require('helmet');
     const compression = require('compression');
@@ -83,6 +84,9 @@ if (cluster.isPrimary && useCluster) {
     connectSupportDB().catch((error) => {
         console.error('Support MongoDB connection error:', error);
     });
+    connectTaskDB().catch((error) => {
+        console.error('Task MongoDB connection error:', error);
+    });
 
     // Start cron jobs only on the first worker or if not in cluster mode to avoid duplicate runs
     if (!cluster.isWorker || (cluster.worker && cluster.worker.id === 1)) {
@@ -113,6 +117,7 @@ if (cluster.isPrimary && useCluster) {
     app.use('/api/notifications', require('./routes/notificationRoute'));
     app.use('/api/support', require('./routes/supportRoute'));
     app.use('/api/chat', require('./routes/chatRoute'));
+    app.use('/api/tasks', require('./routes/taskRoute'));
 
 
     // ==========================
@@ -144,6 +149,14 @@ if (cluster.isPrimary && useCluster) {
         console.log(`Worker ${process.pid} running on port ${PORT}`);
     });
 
+    // TCP & WebSocket Socket Optimization for ultra-smooth low-latency communication
+    server.keepAliveTimeout = 65000;
+    server.headersTimeout = 66000;
+    server.on('connection', (tcpSocket) => {
+        tcpSocket.setNoDelay(true); // Disable Nagle's algorithm for instantaneous TCP packet delivery
+        tcpSocket.setKeepAlive(true, 10000); // 10-second TCP keep-alive probe
+    });
+
     const { initSocket } = require('./services/socketService');
     initSocket(server);
 
@@ -154,6 +167,7 @@ if (cluster.isPrimary && useCluster) {
     const shutdown = async () => {
         console.log(`Worker ${process.pid} shutting down...`);
         server.close(async () => {
+            if (taskConnection.readyState === 1) await taskConnection.close();
             await mongoose.connection.close();
             process.exit(0);
         });

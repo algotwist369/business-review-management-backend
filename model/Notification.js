@@ -33,7 +33,10 @@ const NotificationSchema = new mongoose.Schema({
             'support_issue_remark',
             'support_issue_resolved',
             'support_issue_reopened',
-            'support_issue_status_changed'
+            'support_issue_status_changed',
+            'task_assigned',
+            'task_status_changed',
+            'task_comment'
         ],
         required: true,
     },
