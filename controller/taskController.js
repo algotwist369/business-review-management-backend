@@ -40,6 +40,7 @@ const createTask = async (req, res) => {
             title,
             description,
             business_id,
+            business_ids,
             assigned_to,
             assigned_team,
             priority,
@@ -56,6 +57,22 @@ const createTask = async (req, res) => {
         if (!title || !title.trim()) {
             return res.status(400).json({ error: 'Task title is required' });
         }
+
+        // Format business_ids
+        let formattedBusinessIds = [];
+        if (Array.isArray(business_ids)) {
+            formattedBusinessIds = business_ids
+                .filter(id => mongoose.Types.ObjectId.isValid(id))
+                .map(id => new mongoose.Types.ObjectId(id));
+        } else if (business_ids && mongoose.Types.ObjectId.isValid(business_ids)) {
+            formattedBusinessIds = [new mongoose.Types.ObjectId(business_ids)];
+        } else if (business_id && mongoose.Types.ObjectId.isValid(business_id)) {
+            formattedBusinessIds = [new mongoose.Types.ObjectId(business_id)];
+        }
+
+        const primaryBusinessId = formattedBusinessIds.length > 0
+            ? formattedBusinessIds[0]
+            : (business_id && mongoose.Types.ObjectId.isValid(business_id) ? new mongoose.Types.ObjectId(business_id) : null);
 
         // Format assignees
         let assigneeIds = [];
@@ -102,7 +119,8 @@ const createTask = async (req, res) => {
         const task = await Task.create({
             title: title.trim(),
             description: description ? description.trim() : '',
-            business_id: business_id && mongoose.Types.ObjectId.isValid(business_id) ? business_id : null,
+            business_id: primaryBusinessId,
+            business_ids: formattedBusinessIds,
             assigned_to: assigneeIds,
             assigned_team: assigned_team || 'all',
             created_by: req.user._id,
@@ -126,8 +144,10 @@ const createTask = async (req, res) => {
         const populatedTask = await Task.findById(task._id)
             .populate({ path: 'assigned_to', model: User, select: 'username email role team_type' })
             .populate({ path: 'business_id', model: Business, select: 'business_name location short_code' })
+            .populate({ path: 'business_ids', model: Business, select: 'business_name location short_code' })
             .populate({ path: 'created_by', model: User, select: 'username email' })
             .populate({ path: 'links.added_by', model: User, select: 'username email' })
+            .populate({ path: 'checklist.completed_by', model: User, select: 'username email role' })
             .lean();
 
         // Notify assignees
@@ -198,7 +218,7 @@ const getTasks = async (req, res) => {
                     { assigned_to: req.user._id },
                     { created_by: req.user._id },
                     ...(userTeam && userTeam !== 'all' ? [{ assigned_team: userTeam }] : [{ assigned_team: 'all' }]),
-                    ...(userBusinesses.length > 0 ? [{ business_id: { $in: userBusinesses } }] : []),
+                    ...(userBusinesses.length > 0 ? [{ $or: [{ business_id: { $in: userBusinesses } }, { business_ids: { $in: userBusinesses } }] }] : []),
                 ];
             }
         } else {
@@ -228,7 +248,9 @@ const getTasks = async (req, res) => {
         }
 
         if (business_id && mongoose.Types.ObjectId.isValid(business_id)) {
-            query.business_id = new mongoose.Types.ObjectId(business_id);
+            const bObjectId = new mongoose.Types.ObjectId(business_id);
+            const bizCondition = { $or: [{ business_id: bObjectId }, { business_ids: bObjectId }] };
+            query.$and = query.$and ? [...query.$and, bizCondition] : [bizCondition];
         }
 
         if (assigned_to && mongoose.Types.ObjectId.isValid(assigned_to)) {
@@ -253,6 +275,7 @@ const getTasks = async (req, res) => {
                 .limit(limitNum)
                 .populate({ path: 'assigned_to', model: User, select: 'username email role team_type' })
                 .populate({ path: 'business_id', model: Business, select: 'business_name location short_code' })
+                .populate({ path: 'business_ids', model: Business, select: 'business_name location short_code' })
                 .populate({ path: 'created_by', model: User, select: 'username email' })
                 .populate({ path: 'comments.user_id', model: User, select: 'username email' })
                 .populate({ path: 'links.added_by', model: User, select: 'username email' })
@@ -344,6 +367,7 @@ const getTaskById = async (req, res) => {
         const task = await Task.findById(id)
             .populate({ path: 'assigned_to', model: User, select: 'username email role team_type' })
             .populate({ path: 'business_id', model: Business, select: 'business_name location short_code' })
+            .populate({ path: 'business_ids', model: Business, select: 'business_name location short_code' })
             .populate({ path: 'created_by', model: User, select: 'username email' })
             .populate({ path: 'comments.user_id', model: User, select: 'username email' })
             .populate({ path: 'links.added_by', model: User, select: 'username email' })
@@ -387,6 +411,7 @@ const updateTask = async (req, res) => {
             title,
             description,
             business_id,
+            business_ids,
             assigned_to,
             assigned_team,
             priority,
@@ -404,9 +429,25 @@ const updateTask = async (req, res) => {
 
         if (title !== undefined && title.trim()) task.title = title.trim();
         if (description !== undefined) task.description = description ? description.trim() : '';
-        if (business_id !== undefined) {
+
+        if (business_ids !== undefined) {
+            if (Array.isArray(business_ids)) {
+                task.business_ids = business_ids
+                    .filter(id => mongoose.Types.ObjectId.isValid(id))
+                    .map(id => new mongoose.Types.ObjectId(id));
+                task.business_id = task.business_ids.length > 0 ? task.business_ids[0] : null;
+            } else if (business_ids && mongoose.Types.ObjectId.isValid(business_ids)) {
+                task.business_ids = [new mongoose.Types.ObjectId(business_ids)];
+                task.business_id = task.business_ids[0];
+            } else {
+                task.business_ids = [];
+                task.business_id = null;
+            }
+        } else if (business_id !== undefined) {
             task.business_id = business_id && mongoose.Types.ObjectId.isValid(business_id) ? business_id : null;
+            task.business_ids = task.business_id ? [task.business_id] : [];
         }
+
         if (assigned_team !== undefined) task.assigned_team = assigned_team;
         if (priority !== undefined && ['low', 'medium', 'high', 'urgent'].includes(priority)) {
             task.priority = priority;
@@ -469,6 +510,7 @@ const updateTask = async (req, res) => {
         const updatedTask = await Task.findById(id)
             .populate({ path: 'assigned_to', model: User, select: 'username email role team_type' })
             .populate({ path: 'business_id', model: Business, select: 'business_name location short_code' })
+            .populate({ path: 'business_ids', model: Business, select: 'business_name location short_code' })
             .populate({ path: 'created_by', model: User, select: 'username email' })
             .populate({ path: 'comments.user_id', model: User, select: 'username email' })
             .populate({ path: 'links.added_by', model: User, select: 'username email' })
@@ -538,6 +580,7 @@ const updateTaskStatus = async (req, res) => {
         const updatedTask = await Task.findById(id)
             .populate({ path: 'assigned_to', model: User, select: 'username email role team_type' })
             .populate({ path: 'business_id', model: Business, select: 'business_name location short_code' })
+            .populate({ path: 'business_ids', model: Business, select: 'business_name location short_code' })
             .populate({ path: 'created_by', model: User, select: 'username email' })
             .lean();
 
@@ -759,6 +802,7 @@ const restoreTask = async (req, res) => {
         const updatedTask = await Task.findById(id)
             .populate({ path: 'assigned_to', model: User, select: 'username email role team_type' })
             .populate({ path: 'business_id', model: Business, select: 'business_name location short_code' })
+            .populate({ path: 'business_ids', model: Business, select: 'business_name location short_code' })
             .populate({ path: 'created_by', model: User, select: 'username email' })
             .lean();
 
@@ -809,6 +853,7 @@ const addTaskLink = async (req, res) => {
         const updatedTask = await Task.findById(id)
             .populate({ path: 'assigned_to', model: User, select: 'username email role team_type' })
             .populate({ path: 'business_id', model: Business, select: 'business_name location short_code' })
+            .populate({ path: 'business_ids', model: Business, select: 'business_name location short_code' })
             .populate({ path: 'created_by', model: User, select: 'username email' })
             .populate({ path: 'comments.user_id', model: User, select: 'username email' })
             .populate({ path: 'links.added_by', model: User, select: 'username email' })
@@ -850,6 +895,7 @@ const removeTaskLink = async (req, res) => {
         const updatedTask = await Task.findById(id)
             .populate({ path: 'assigned_to', model: User, select: 'username email role team_type' })
             .populate({ path: 'business_id', model: Business, select: 'business_name location short_code' })
+            .populate({ path: 'business_ids', model: Business, select: 'business_name location short_code' })
             .populate({ path: 'created_by', model: User, select: 'username email' })
             .populate({ path: 'comments.user_id', model: User, select: 'username email' })
             .populate({ path: 'links.added_by', model: User, select: 'username email' })

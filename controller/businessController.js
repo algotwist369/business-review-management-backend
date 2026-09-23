@@ -1,6 +1,32 @@
 const mongoose = require('mongoose');
 const Business = require('../model/Business');
 const User = require('../model/user');
+const Notification = require('../model/Notification');
+const { sendNotification } = require('../services/socketService');
+
+const notifyUser = async ({ recipientId, title, message, type, businessId, triggeredByUserId }) => {
+    try {
+        const notif = await Notification.create({
+            user_id: recipientId,
+            title,
+            message,
+            type,
+            business_id: businessId || null,
+            triggered_by_user_id: triggeredByUserId || null,
+        });
+
+        const populated = await Notification.findById(notif._id)
+            .populate({ path: 'triggered_by_user_id', model: User, select: 'username email' })
+            .populate({ path: 'business_id', model: Business, select: 'business_name location' })
+            .lean();
+
+        sendNotification(recipientId, populated);
+        return populated;
+    } catch (err) {
+        console.error('Error sending business notification:', err.message);
+        return null;
+    }
+};
 
 // add business
 const addBusiness = async (req, res) => {
@@ -133,6 +159,7 @@ const getAllBusiness = async (req, res) => {
 
         let businesses = await Business.find(filter)
             .populate('user_id', 'username email role')
+            .populate('edited_by', 'username email')
             .sort(sort)
             .skip(skip)
             .limit(Number(limit))
@@ -214,6 +241,8 @@ const editBusiness = async (req, res) => {
             'is_active',
             'is_new',
             'user_id',
+            'remarks',
+            'is_edited',
         ];
 
         const updateData = {};
@@ -221,6 +250,15 @@ const editBusiness = async (req, res) => {
         for (const field of allowedFields) {
             if (req.body[field] !== undefined) {
                 updateData[field] = req.body[field];
+            }
+        }
+
+        if (req.user.role === 'admin' || req.user.role === 'super_admin') {
+            updateData.is_edited = true;
+            updateData.edited_at = new Date();
+            updateData.edited_by = req.user._id;
+            if (req.body.remarks !== undefined) {
+                updateData.remarks = typeof req.body.remarks === 'string' ? req.body.remarks.trim() : '';
             }
         }
 
@@ -261,6 +299,34 @@ const editBusiness = async (req, res) => {
 
         if (!updatedBusiness) {
             return res.status(404).json({ error: 'Business not found' });
+        }
+
+        // Notify assigned users and creator about the edit and remark
+        try {
+            const assignedUsers = await User.find({
+                role: 'user',
+                is_deleted: false,
+                assigned_businesses: id,
+            }).select('_id username email').lean();
+
+            const recipientIds = new Set(assignedUsers.map(u => u._id.toString()));
+            if (updatedBusiness.user_id && updatedBusiness.user_id.toString() !== req.user._id.toString()) {
+                recipientIds.add(updatedBusiness.user_id.toString());
+            }
+
+            const remarkSnippet = updateData.remarks ? ` Remark: "${updateData.remarks}"` : '';
+            for (const recipientId of recipientIds) {
+                await notifyUser({
+                    recipientId,
+                    title: `Business Details Updated: ${updatedBusiness.business_name}`,
+                    message: `Admin updated details for "${updatedBusiness.business_name}".${remarkSnippet}`,
+                    type: 'business_edited',
+                    businessId: updatedBusiness._id,
+                    triggeredByUserId: req.user._id,
+                });
+            }
+        } catch (notifErr) {
+            console.error('Error triggering business edited notifications:', notifErr);
         }
 
         return res.status(200).json(updatedBusiness);

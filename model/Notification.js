@@ -36,7 +36,8 @@ const NotificationSchema = new mongoose.Schema({
             'support_issue_status_changed',
             'task_assigned',
             'task_status_changed',
-            'task_comment'
+            'task_comment',
+            'business_edited'
         ],
         required: true,
     },

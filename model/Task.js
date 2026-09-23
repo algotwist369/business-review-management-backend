@@ -96,6 +96,11 @@ const TaskSchema = new mongoose.Schema({
         index: true,
         default: null,
     },
+    business_ids: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Business',
+        index: true,
+    }],
     assigned_to: [{
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',

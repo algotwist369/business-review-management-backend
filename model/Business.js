@@ -44,6 +44,32 @@ const businessSchema = new mongoose.Schema(
             default: true,
             index: true,
         },
+
+        
+        // if admin edit business details, then this will be true, otherwise false and add a remark so that user can see the remark and edit the business details again with notification
+        is_edited:{
+            type: Boolean,
+            default: false,
+            index: true,
+        },
+
+        remarks: {
+            type: String,
+            trim: true,
+            default: '',
+        },
+
+        edited_at: {
+            type: Date,
+            default: null,
+            index: true,
+        },
+
+        edited_by: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'User',
+            default: null,
+        },
     },
     {
         timestamps: true,

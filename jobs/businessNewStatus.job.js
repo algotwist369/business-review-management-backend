@@ -23,6 +23,22 @@ const runDailyJobs = async () => {
             }
         );
         console.log(`[Job] Business status updated. Modified: ${result.modifiedCount}`);
+
+        // 3. Set is_edited to false for businesses edited >= 7 days ago
+        const editedResult = await Business.updateMany(
+            {
+                is_edited: true,
+                edited_at: {
+                    $lte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // 7 days ago
+                },
+            },
+            {
+                $set: {
+                    is_edited: false,
+                },
+            }
+        );
+        console.log(`[Job] Business edited status updated. Modified: ${editedResult.modifiedCount}`);
     } catch (error) {
         console.error('[Job Error] Failed to run daily jobs:', error);
     }
