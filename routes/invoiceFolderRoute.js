@@ -4,13 +4,17 @@ const authMiddleware = require('../middlewares/auth.middleware');
 const {
     requireInvoiceManagementAccess,
     requireFolderAccess,
+    requireFolderCreateAccess,
 } = require('../middlewares/invoiceAccess.middleware');
 const folderController = require('../controllers/invoiceFolderController');
 
 router.use(authMiddleware);
 
-// Folder creation (Admin with grant or Super Admin)
-router.post('/', requireInvoiceManagementAccess, folderController.createFolder);
+// Folder creation (Admin with grant, Super Admin, or user with access to parent folder)
+router.post('/', requireFolderCreateAccess, folderController.createFolder);
+
+// Ensure subfolders tree for bulk directory upload
+router.post('/ensure-subfolders', requireFolderCreateAccess, folderController.ensureSubfolders);
 
 // List accessible folders
 router.get('/', folderController.getFolders);
@@ -18,8 +22,8 @@ router.get('/', folderController.getFolders);
 // Folder detail
 router.get('/:folderId', requireFolderAccess('read'), folderController.getFolderById);
 
-// Update folder
-router.put('/:folderId', requireInvoiceManagementAccess, folderController.updateFolder);
+// Update/Rename folder
+router.put('/:folderId', requireFolderAccess('write'), folderController.updateFolder);
 
 // Soft delete folder
 router.delete('/:folderId', requireInvoiceManagementAccess, folderController.deleteFolder);

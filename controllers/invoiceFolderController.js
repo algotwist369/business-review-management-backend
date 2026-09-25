@@ -4,24 +4,49 @@ const Invoice = require('../models/invoiceModel');
 const User = require('../model/user');
 const { logInvoiceActivity } = require('../services/invoiceAudit.service');
 
-// Create new invoice folder (Admin with grant or Super Admin)
+// Helper: recursively find all descendant subfolder IDs
+const getAllDescendantFolderIds = async (folderId) => {
+    const children = await InvoiceFolder.find({ parent_id: folderId, is_active: true }).select('_id');
+    let ids = children.map(c => c._id);
+    for (const child of children) {
+        const subIds = await getAllDescendantFolderIds(child._id);
+        ids = ids.concat(subIds);
+    }
+    return ids;
+};
+
+// Create new invoice folder or subfolder
 const createFolder = async (req, res) => {
     try {
-        const { name, description } = req.body;
+        const { name, description, parent_id } = req.body;
 
         if (!name || name.trim().length === 0) {
             return res.status(400).json({ error: 'Folder name is required' });
         }
 
+        let parentFolder = null;
+        if (parent_id) {
+            parentFolder = await InvoiceFolder.findById(parent_id);
+            if (!parentFolder || !parentFolder.is_active) {
+                return res.status(404).json({ error: 'Parent folder not found or inactive' });
+            }
+        }
+
+        // Inherit assigned users from parent if subfolder
+        const assigned_users = parentFolder && Array.isArray(parentFolder.assigned_users)
+            ? [...parentFolder.assigned_users]
+            : [];
+
         const folder = await InvoiceFolder.create({
             name: name.trim(),
             description: description ? description.trim() : '',
+            parent_id: parentFolder ? parentFolder._id : null,
             created_by: {
                 user_id: req.user._id,
                 username: req.user.username || req.user.email,
                 role: req.user.role,
             },
-            assigned_users: [],
+            assigned_users,
             is_active: true,
         });
 
@@ -30,7 +55,7 @@ const createFolder = async (req, res) => {
             user: req.user,
             folderId: folder._id,
             folderName: folder.name,
-            details: { name: folder.name, description },
+            details: { name: folder.name, description, parent_id: folder.parent_id },
             ipAddress: req.ip,
         });
 
@@ -41,15 +66,100 @@ const createFolder = async (req, res) => {
     }
 };
 
+// Ensure subfolders hierarchy during folder upload
+const ensureSubfolders = async (req, res) => {
+    try {
+        const { parentFolderId, paths } = req.body;
+
+        if (!parentFolderId || !Array.isArray(paths) || paths.length === 0) {
+            return res.status(400).json({ error: 'parentFolderId and paths array are required' });
+        }
+
+        const rootParent = await InvoiceFolder.findById(parentFolderId);
+        if (!rootParent || !rootParent.is_active) {
+            return res.status(404).json({ error: 'Parent folder not found or inactive' });
+        }
+
+        const pathMap = {};
+        const baseAssignedUsers = rootParent.assigned_users || [];
+
+        // Sort paths by depth so parent directories are created first
+        const sortedPaths = [...new Set(paths.map(p => p.trim()).filter(Boolean))]
+            .sort((a, b) => a.split('/').length - b.split('/').length);
+
+        for (const fullPath of sortedPaths) {
+            const parts = fullPath.split('/').filter(Boolean);
+            let currentParentId = rootParent._id;
+            let currentAccPath = '';
+
+            for (const part of parts) {
+                currentAccPath = currentAccPath ? `${currentAccPath}/${part}` : part;
+
+                if (pathMap[currentAccPath]) {
+                    currentParentId = pathMap[currentAccPath];
+                    continue;
+                }
+
+                let existing = await InvoiceFolder.findOne({
+                    parent_id: currentParentId,
+                    name: part,
+                    is_active: true,
+                });
+
+                if (!existing) {
+                    existing = await InvoiceFolder.create({
+                        name: part,
+                        parent_id: currentParentId,
+                        created_by: {
+                            user_id: req.user._id,
+                            username: req.user.username || req.user.email,
+                            role: req.user.role,
+                        },
+                        assigned_users: baseAssignedUsers,
+                        is_active: true,
+                    });
+
+                    logInvoiceActivity({
+                        action: 'FOLDER_CREATED',
+                        user: req.user,
+                        folderId: existing._id,
+                        folderName: existing.name,
+                        details: { name: existing.name, autoCreatedFromUpload: true },
+                        ipAddress: req.ip,
+                    });
+                }
+
+                pathMap[currentAccPath] = existing._id.toString();
+                currentParentId = existing._id;
+            }
+        }
+
+        return res.json({ folderMap: pathMap });
+    } catch (err) {
+        console.error('[InvoiceFolder] ensureSubfolders error:', err);
+        return res.status(500).json({ error: 'Failed to ensure subfolders' });
+    }
+};
+
 // Get folders accessible to current user
 const getFolders = async (req, res) => {
     try {
         const userId = req.user._id;
         const role = req.user.role;
+        const { parentId } = req.query;
+
+        const parentFilter = {};
+        if (parentId !== undefined) {
+            if (parentId === 'root' || parentId === 'null' || parentId === '') {
+                parentFilter.parent_id = null;
+            } else if (parentId !== 'all') {
+                parentFilter.parent_id = parentId;
+            }
+        }
 
         // 1. Super Admin sees all active folders
         if (role === 'super_admin') {
-            const folders = await InvoiceFolder.find({ is_active: true }).sort({ created_at: -1 });
+            const folders = await InvoiceFolder.find({ is_active: true, ...parentFilter }).sort({ created_at: -1 });
             return res.json({ folders });
         }
 
@@ -57,13 +167,14 @@ const getFolders = async (req, res) => {
         const perm = await InvoicePermission.findOne({ user_id: userId });
         if (perm?.is_ca) {
             if (perm.folder_access_type === 'all') {
-                const folders = await InvoiceFolder.find({ is_active: true }).sort({ created_at: -1 });
+                const folders = await InvoiceFolder.find({ is_active: true, ...parentFilter }).sort({ created_at: -1 });
                 return res.json({ folders, roleInInvoice: 'ca' });
             }
             if (perm.folder_access_type === 'custom') {
                 const folders = await InvoiceFolder.find({
                     _id: { $in: perm.allowed_folder_ids },
                     is_active: true,
+                    ...parentFilter,
                 }).sort({ created_at: -1 });
                 return res.json({ folders, roleInInvoice: 'ca' });
             }
@@ -72,6 +183,7 @@ const getFolders = async (req, res) => {
         // 3. Admin / User: Returns folders created by user OR assigned to user
         const query = {
             is_active: true,
+            ...parentFilter,
             $or: [
                 { 'created_by.user_id': userId },
                 { 'assigned_users.user_id': userId },
@@ -86,18 +198,39 @@ const getFolders = async (req, res) => {
     }
 };
 
-// Get folder by ID
+// Get folder by ID with its subfolders and breadcrumbs
 const getFolderById = async (req, res) => {
     try {
         const { folderId } = req.params;
-        const folder = req.currentFolder || await InvoiceFolder.findById(folderId);
+        const folder = await InvoiceFolder.findById(folderId);
 
         if (!folder || !folder.is_active) {
             return res.status(404).json({ error: 'Folder not found or inactive' });
         }
 
-        return res.json({ folder });
+        // Subfolders of this folder
+        const subfolders = await InvoiceFolder.find({
+            parent_id: folder._id,
+            is_active: true,
+        }).sort({ name: 1 });
+
+        // Build breadcrumbs up to root
+        const breadcrumbs = [];
+        let curr = folder;
+        while (curr && curr.parent_id) {
+            const parent = await InvoiceFolder.findById(curr.parent_id).select('_id name parent_id');
+            if (parent && parent.is_active) {
+                breadcrumbs.unshift({ _id: parent._id, name: parent.name });
+                curr = parent;
+            } else {
+                break;
+            }
+        }
+        breadcrumbs.push({ _id: folder._id, name: folder.name });
+
+        return res.json({ folder, subfolders, breadcrumbs });
     } catch (err) {
+        console.error('[InvoiceFolder] getFolderById error:', err);
         return res.status(500).json({ error: 'Failed to fetch folder details' });
     }
 };
@@ -181,7 +314,7 @@ const removeUserFromFolder = async (req, res) => {
     }
 };
 
-// Update folder details
+// Update folder details (Rename / Description edit)
 const updateFolder = async (req, res) => {
     try {
         const { folderId } = req.params;
@@ -192,7 +325,17 @@ const updateFolder = async (req, res) => {
             return res.status(404).json({ error: 'Folder not found' });
         }
 
-        if (name) folder.name = name.trim();
+        const userIdStr = (req.user._id || req.user.id || '').toString();
+        const isSuperAdmin = req.user.role === 'super_admin';
+        const isOwner = folder.created_by?.user_id?.toString() === userIdStr;
+        const perm = await InvoicePermission.findOne({ user_id: req.user._id });
+        const canManage = Boolean(perm?.can_manage_invoices);
+
+        if (!isSuperAdmin && !isOwner && !canManage) {
+            return res.status(403).json({ error: 'You do not have permission to edit this folder' });
+        }
+
+        if (name && name.trim()) folder.name = name.trim();
         if (typeof description === 'string') folder.description = description.trim();
 
         await folder.save();
@@ -202,17 +345,18 @@ const updateFolder = async (req, res) => {
             user: req.user,
             folderId: folder._id,
             folderName: folder.name,
-            details: { updatedFields: { name, description } },
+            details: { updatedFields: { name: folder.name, description: folder.description } },
             ipAddress: req.ip,
         });
 
         return res.json({ message: 'Folder updated successfully', folder });
     } catch (err) {
+        console.error('[InvoiceFolder] updateFolder error:', err);
         return res.status(500).json({ error: 'Failed to update folder' });
     }
 };
 
-// Soft delete folder and cascade delete all associated files and user access
+// Soft delete folder and cascade delete all descendant subfolders, associated files and user access
 const deleteFolder = async (req, res) => {
     try {
         const { folderId } = req.params;
@@ -233,9 +377,13 @@ const deleteFolder = async (req, res) => {
             });
         }
 
-        // 1. Cascade soft-delete all active invoices belonging to this folder into the archive vault
+        // Get all descendant subfolders recursively
+        const descendantIds = await getAllDescendantFolderIds(folder._id);
+        const allFolderIds = [folder._id, ...descendantIds];
+
+        // 1. Cascade soft-delete all active invoices belonging to this folder and its subfolders into archive vault
         const updateResult = await Invoice.updateMany(
-            { folder_id: folder._id, is_deleted: false },
+            { folder_id: { $in: allFolderIds }, is_deleted: false },
             {
                 $set: {
                     is_deleted: true,
@@ -254,15 +402,16 @@ const deleteFolder = async (req, res) => {
 
         const deletedFilesCount = updateResult.modifiedCount || 0;
 
-        // 2. Deactivate folder and clear all assigned team users
-        folder.is_active = false;
-        folder.assigned_users = [];
-        await folder.save();
+        // 2. Deactivate folder and all descendant subfolders
+        await InvoiceFolder.updateMany(
+            { _id: { $in: allFolderIds } },
+            { $set: { is_active: false, assigned_users: [] } }
+        );
 
         // 3. Revoke folder access from any CA or user permissions
         await InvoicePermission.updateMany(
-            { allowed_folder_ids: folder._id },
-            { $pull: { allowed_folder_ids: folder._id } }
+            { allowed_folder_ids: { $in: allFolderIds } },
+            { $pull: { allowed_folder_ids: { $in: allFolderIds } } }
         );
 
         logInvoiceActivity({
@@ -273,13 +422,14 @@ const deleteFolder = async (req, res) => {
             details: {
                 folderName: folder.name,
                 invoicesArchived: deletedFilesCount,
+                subfoldersCount: descendantIds.length,
                 accessRevoked: true,
             },
             ipAddress: req.ip,
         });
 
         return res.json({
-            message: `Folder "${folder.name}" deleted successfully. All ${deletedFilesCount} associated files were archived and user access was revoked.`,
+            message: `Folder "${folder.name}" deleted successfully. All ${deletedFilesCount} associated files were archived.`,
             deletedFilesCount,
         });
     } catch (err) {
@@ -290,6 +440,7 @@ const deleteFolder = async (req, res) => {
 
 module.exports = {
     createFolder,
+    ensureSubfolders,
     getFolders,
     getFolderById,
     assignUsersToFolder,

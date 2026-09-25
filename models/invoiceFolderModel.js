@@ -14,6 +14,12 @@ const InvoiceFolderSchema = new mongoose.Schema(
             trim: true,
             default: '',
         },
+        parent_id: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'InvoiceFolder',
+            default: null,
+            index: true,
+        },
         created_by: {
             user_id: {
                 type: mongoose.Schema.Types.ObjectId,
@@ -43,6 +49,7 @@ const InvoiceFolderSchema = new mongoose.Schema(
     }
 );
 
+InvoiceFolderSchema.index({ parent_id: 1, is_active: 1 });
 InvoiceFolderSchema.index({ 'assigned_users.user_id': 1, is_active: 1 });
 InvoiceFolderSchema.index({ 'created_by.user_id': 1 });
 InvoiceFolderSchema.index({ is_active: 1, created_at: -1 });

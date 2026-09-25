@@ -67,7 +67,21 @@ const requireFolderAccess = (actionType = 'read') => {
                 return next();
             }
 
-            // 3. Is CA with read access?
+            // 3. Is ancestor folder accessible to user?
+            let ancestor = folder;
+            while (ancestor && ancestor.parent_id) {
+                ancestor = await InvoiceFolder.findById(ancestor.parent_id);
+                if (!ancestor || !ancestor.is_active) break;
+                if (
+                    ancestor.created_by?.user_id?.toString() === userIdStr ||
+                    ancestor.assigned_users.some(u => u.user_id?.toString() === userIdStr)
+                ) {
+                    req.currentFolder = folder;
+                    return next();
+                }
+            }
+
+            // 4. Is CA with read access?
             const perm = await InvoicePermission.findOne({ user_id: req.user._id });
             if (perm?.is_ca) {
                 if (actionType === 'write') {
@@ -96,8 +110,43 @@ const requireFolderAccess = (actionType = 'read') => {
     };
 };
 
+/**
+ * Validates if user can create a folder or subfolder
+ */
+const requireFolderCreateAccess = async (req, res, next) => {
+    try {
+        if (req.user?.role === 'super_admin') return next();
+
+        const parentId = req.body.parent_id || req.body.parentFolderId;
+        if (parentId) {
+            const parent = await InvoiceFolder.findById(parentId);
+            if (!parent || !parent.is_active) {
+                return res.status(404).json({ error: 'Parent folder not found or inactive' });
+            }
+            const userIdStr = req.user._id.toString();
+            const isOwner = parent.created_by?.user_id?.toString() === userIdStr;
+            const isAssigned = parent.assigned_users.some(u => u.user_id?.toString() === userIdStr);
+            if (isOwner || isAssigned) {
+                req.currentFolder = parent;
+                return next();
+            }
+        }
+
+        const perm = await InvoicePermission.findOne({ user_id: req.user._id });
+        if (perm?.can_manage_invoices) {
+            req.invoicePermission = perm;
+            return next();
+        }
+
+        return res.status(403).json({ error: 'Access denied: Invoice management permission required' });
+    } catch (err) {
+        return res.status(500).json({ error: 'Error checking folder creation authorization' });
+    }
+};
+
 module.exports = {
     requireSuperAdmin,
     requireInvoiceManagementAccess,
     requireFolderAccess,
+    requireFolderCreateAccess,
 };

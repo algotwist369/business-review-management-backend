@@ -55,7 +55,7 @@ const confirmBatchUpload = async (req, res) => {
             const month = isNaN(dateObj.getMonth()) ? new Date().getMonth() + 1 : dateObj.getMonth() + 1;
 
             return {
-                folder_id: folderId,
+                folder_id: file.folderId || folderId,
                 file_name: file.fileName,
                 stored_s3_key: file.s3Key,
                 s3_bucket: file.bucket || s3Service.bucketName,
