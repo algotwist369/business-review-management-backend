@@ -1,5 +1,6 @@
 const InvoiceFolder = require('../models/invoiceFolderModel');
 const InvoicePermission = require('../models/invoicePermissionModel');
+const Invoice = require('../models/invoiceModel');
 const User = require('../model/user');
 const { logInvoiceActivity } = require('../services/invoiceAudit.service');
 
@@ -211,30 +212,78 @@ const updateFolder = async (req, res) => {
     }
 };
 
-// Soft delete folder
+// Soft delete folder and cascade delete all associated files and user access
 const deleteFolder = async (req, res) => {
     try {
         const { folderId } = req.params;
 
         const folder = await InvoiceFolder.findById(folderId);
-        if (!folder) {
-            return res.status(404).json({ error: 'Folder not found' });
+        if (!folder || !folder.is_active) {
+            return res.status(404).json({ error: 'Folder not found or already deleted' });
         }
 
+        // Authorization: Only Super Admin or the creator of the folder can delete it
+        const userIdStr = (req.user._id || req.user.id || '').toString();
+        const isSuperAdmin = req.user.role === 'super_admin';
+        const isOwner = folder.created_by?.user_id?.toString() === userIdStr;
+
+        if (!isSuperAdmin && !isOwner) {
+            return res.status(403).json({
+                error: 'You do not have permission to delete this folder. Only the folder creator or Super Admin can delete it.',
+            });
+        }
+
+        // 1. Cascade soft-delete all active invoices belonging to this folder into the archive vault
+        const updateResult = await Invoice.updateMany(
+            { folder_id: folder._id, is_deleted: false },
+            {
+                $set: {
+                    is_deleted: true,
+                    deletion_meta: {
+                        deleted_by: {
+                            user_id: req.user._id,
+                            username: req.user.username || req.user.email,
+                            role: req.user.role,
+                        },
+                        deleted_at: new Date(),
+                        delete_reason: `Folder deleted: ${folder.name}`,
+                    },
+                },
+            }
+        );
+
+        const deletedFilesCount = updateResult.modifiedCount || 0;
+
+        // 2. Deactivate folder and clear all assigned team users
         folder.is_active = false;
+        folder.assigned_users = [];
         await folder.save();
+
+        // 3. Revoke folder access from any CA or user permissions
+        await InvoicePermission.updateMany(
+            { allowed_folder_ids: folder._id },
+            { $pull: { allowed_folder_ids: folder._id } }
+        );
 
         logInvoiceActivity({
             action: 'FOLDER_DELETED',
             user: req.user,
             folderId: folder._id,
             folderName: folder.name,
-            details: { folderName: folder.name },
+            details: {
+                folderName: folder.name,
+                invoicesArchived: deletedFilesCount,
+                accessRevoked: true,
+            },
             ipAddress: req.ip,
         });
 
-        return res.json({ message: 'Folder deleted successfully' });
+        return res.json({
+            message: `Folder "${folder.name}" deleted successfully. All ${deletedFilesCount} associated files were archived and user access was revoked.`,
+            deletedFilesCount,
+        });
     } catch (err) {
+        console.error('[InvoiceFolder] deleteFolder error:', err);
         return res.status(500).json({ error: 'Failed to delete folder' });
     }
 };
