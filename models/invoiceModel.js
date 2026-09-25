@@ -49,6 +49,18 @@ const InvoiceSchema = new mongoose.Schema(
             required: true,
             index: true,
         },
+        category: {
+            type: String,
+            trim: true,
+            default: 'General',
+            index: true,
+        },
+        file_hash: {
+            type: String,
+            trim: true,
+            default: '',
+            index: true,
+        },
         uploaded_by: {
             user_id: {
                 type: mongoose.Schema.Types.ObjectId,
@@ -85,6 +97,8 @@ const InvoiceSchema = new mongoose.Schema(
 // High-performance compound indexes
 InvoiceSchema.index({ folder_id: 1, is_deleted: 1, year: -1, month: -1 });
 InvoiceSchema.index({ folder_id: 1, is_deleted: 1, created_at: -1 });
+InvoiceSchema.index({ folder_id: 1, category: 1, is_deleted: 1 });
+InvoiceSchema.index({ folder_id: 1, file_hash: 1, is_deleted: 1 });
 InvoiceSchema.index({ is_deleted: 1, 'deletion_meta.deleted_at': -1 });
 InvoiceSchema.index({ year: 1, month: 1, is_deleted: 1 });
 

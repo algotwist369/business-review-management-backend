@@ -9,7 +9,8 @@ const invoiceController = require('../controllers/invoiceController');
 
 router.use(authMiddleware);
 
-// 1. Upload Pipeline
+// 1. Upload Pipeline & Duplicate Verification
+router.post('/check-duplicates', requireFolderAccess('write'), invoiceController.checkDuplicates);
 router.post('/batch-presign', requireFolderAccess('write'), invoiceController.batchPresignUpload);
 router.post('/confirm-upload', requireFolderAccess('write'), invoiceController.confirmBatchUpload);
 
@@ -23,8 +24,10 @@ router.post('/batch-download', invoiceController.getBatchDownloadUrls);
 router.post('/batch-delete', invoiceController.batchSoftDeleteInvoices);
 router.delete('/:invoiceId', invoiceController.softDeleteInvoice);
 
-// 4. Super Admin Archive Vault & Purge
+// 4. Super Admin Archive Vault, Batch Restore & Batch Purge
 router.get('/archive/vault', requireSuperAdmin, invoiceController.getArchiveVault);
+router.post('/archive/batch-restore', requireSuperAdmin, invoiceController.batchRestoreInvoices);
+router.post('/archive/batch-purge', requireSuperAdmin, invoiceController.batchPurgeInvoices);
 router.post('/archive/:invoiceId/restore', requireSuperAdmin, invoiceController.restoreInvoice);
 router.delete('/archive/:invoiceId/purge', requireSuperAdmin, invoiceController.purgeInvoicePermanently);
 

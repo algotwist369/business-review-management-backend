@@ -65,6 +65,8 @@ const confirmBatchUpload = async (req, res) => {
                 invoice_date: isNaN(dateObj.getTime()) ? new Date() : dateObj,
                 year,
                 month,
+                category: (file.category || 'General').trim(),
+                file_hash: file.fileHash || '',
                 uploaded_by: {
                     user_id: req.user._id,
                     username: req.user.username || req.user.email,
@@ -100,7 +102,7 @@ const confirmBatchUpload = async (req, res) => {
     }
 };
 
-// 3. Get Active Invoices in Folder (or across folders for CA) with Date/Month/Year filters
+// 3. Get Active Invoices in Folder (or across folders for CA) with Category/Date/Month/Year filters
 const getInvoices = async (req, res) => {
     try {
         const {
@@ -110,6 +112,7 @@ const getInvoices = async (req, res) => {
             startDate,
             endDate,
             search,
+            category,
             page = 1,
             limit = 50,
         } = req.query;
@@ -118,6 +121,10 @@ const getInvoices = async (req, res) => {
 
         if (folderId) {
             filter.folder_id = folderId;
+        }
+
+        if (category && category !== 'all' && category.trim()) {
+            filter.category = category.trim();
         }
 
         if (year) {
@@ -141,18 +148,22 @@ const getInvoices = async (req, res) => {
         const skip = (Math.max(1, parseInt(page, 10)) - 1) * parseInt(limit, 10);
         const pageSize = Math.min(200, Math.max(1, parseInt(limit, 10)));
 
-        const [invoices, total] = await Promise.all([
+        const [invoices, total, categories] = await Promise.all([
             Invoice.find(filter)
                 .populate('folder_id', 'name')
                 .sort({ invoice_date: -1, created_at: -1 })
                 .skip(skip)
                 .limit(pageSize),
             Invoice.countDocuments(filter),
+            folderId
+                ? Invoice.distinct('category', { folder_id: folderId, is_deleted: false })
+                : Invoice.distinct('category', { is_deleted: false }),
         ]);
 
         return res.json({
             invoices,
             total,
+            categories: categories.filter(Boolean),
             page: parseInt(page, 10),
             totalPages: Math.ceil(total / pageSize),
         });
@@ -474,9 +485,162 @@ const purgeInvoicePermanently = async (req, res) => {
     }
 };
 
+// 11. Check for Duplicate Invoices in a Folder
+const checkDuplicates = async (req, res) => {
+    try {
+        const { folderId, files } = req.body;
+        if (!folderId || !Array.isArray(files) || files.length === 0) {
+            return res.json({ duplicates: [] });
+        }
+
+        const hashes = files.map(f => f.fileHash).filter(Boolean);
+        const names = files.map(f => f.fileName).filter(Boolean);
+
+        const orClauses = [];
+        if (hashes.length > 0) {
+            orClauses.push({ file_hash: { $in: hashes } });
+        }
+        if (names.length > 0) {
+            orClauses.push({ file_name: { $in: names } });
+        }
+
+        if (orClauses.length === 0) {
+            return res.json({ duplicates: [] });
+        }
+
+        const existingInvoices = await Invoice.find({
+            folder_id: folderId,
+            is_deleted: false,
+            $or: orClauses,
+        }).select('_id file_name file_size_bytes file_hash invoice_date uploaded_by category created_at');
+
+        const duplicates = [];
+        for (const file of files) {
+            const match = existingInvoices.find(
+                inv => (file.fileHash && inv.file_hash && inv.file_hash === file.fileHash) ||
+                       (inv.file_name.toLowerCase() === (file.fileName || '').toLowerCase())
+            );
+            if (match) {
+                duplicates.push({
+                    fileName: file.fileName,
+                    fileSizeBytes: file.fileSizeBytes,
+                    fileHash: file.fileHash,
+                    existingInvoice: {
+                        _id: match._id,
+                        fileName: match.file_name,
+                        fileSizeBytes: match.file_size_bytes,
+                        invoiceDate: match.invoice_date,
+                        uploadedBy: match.uploaded_by?.username || match.uploaded_by?.email || 'Unknown',
+                        category: match.category || 'General',
+                        createdAt: match.created_at,
+                    },
+                    matchType: (file.fileHash && match.file_hash === file.fileHash) ? 'exact_hash' : 'name_match',
+                });
+            }
+        }
+
+        return res.json({ duplicates });
+    } catch (err) {
+        console.error('[Invoice] checkDuplicates error:', err);
+        return res.status(500).json({ error: 'Failed to verify duplicate invoices' });
+    }
+};
+
+// 12. Batch Purge Invoices Permanently from S3 & DB (Super Admin only)
+const batchPurgeInvoices = async (req, res) => {
+    try {
+        const { invoiceIds } = req.body;
+
+        if (!Array.isArray(invoiceIds) || invoiceIds.length === 0) {
+            return res.status(400).json({ error: 'invoiceIds array is required' });
+        }
+
+        const invoices = await Invoice.find({ _id: { $in: invoiceIds } });
+        if (invoices.length === 0) {
+            return res.status(404).json({ error: 'No invoices found to purge' });
+        }
+
+        // Delete all from S3
+        await Promise.all(
+            invoices.map(async (inv) => {
+                if (inv.stored_s3_key) {
+                    try {
+                        await s3Service.deleteS3Object(inv.stored_s3_key);
+                    } catch (e) {
+                        console.error('[Invoice] Failed to delete S3 key:', inv.stored_s3_key, e.message);
+                    }
+                }
+            })
+        );
+
+        await Invoice.deleteMany({ _id: { $in: invoiceIds } });
+
+        logInvoiceActivity({
+            action: 'INVOICES_BATCH_PURGED',
+            user: req.user,
+            details: {
+                purgedCount: invoices.length,
+                purgedInvoiceIds: invoiceIds,
+            },
+            ipAddress: req.ip,
+        });
+
+        return res.json({
+            message: `Successfully purged ${invoices.length} invoices permanently from S3 and database`,
+            purgedCount: invoices.length,
+        });
+    } catch (err) {
+        console.error('[Invoice] batchPurgeInvoices error:', err);
+        return res.status(500).json({ error: 'Failed to purge selected invoices' });
+    }
+};
+
+// 13. Batch Restore Invoices back to Active Folders (Super Admin only)
+const batchRestoreInvoices = async (req, res) => {
+    try {
+        const { invoiceIds } = req.body;
+
+        if (!Array.isArray(invoiceIds) || invoiceIds.length === 0) {
+            return res.status(400).json({ error: 'invoiceIds array is required' });
+        }
+
+        const updateResult = await Invoice.updateMany(
+            { _id: { $in: invoiceIds }, is_deleted: true },
+            {
+                $set: {
+                    is_deleted: false,
+                    deletion_meta: {
+                        deleted_by: null,
+                        deleted_at: null,
+                        delete_reason: '',
+                    },
+                },
+            }
+        );
+
+        logInvoiceActivity({
+            action: 'INVOICES_BATCH_RESTORED',
+            user: req.user,
+            details: {
+                restoredCount: updateResult.modifiedCount || 0,
+            },
+            ipAddress: req.ip,
+        });
+
+        return res.json({
+            message: `Successfully restored ${updateResult.modifiedCount || 0} invoices back to their active folders`,
+            restoredCount: updateResult.modifiedCount || 0,
+        });
+    } catch (err) {
+        console.error('[Invoice] batchRestoreInvoices error:', err);
+        return res.status(500).json({ error: 'Failed to restore selected invoices' });
+    }
+};
+
 module.exports = {
     batchPresignUpload,
     confirmBatchUpload,
+    checkDuplicates,
     getInvoices,
     getInvoiceViewUrl,
     getInvoiceDownloadUrl,
@@ -485,5 +649,7 @@ module.exports = {
     batchSoftDeleteInvoices,
     getArchiveVault,
     restoreInvoice,
+    batchRestoreInvoices,
     purgeInvoicePermanently,
+    batchPurgeInvoices,
 };
