@@ -184,6 +184,25 @@ const getInvoiceViewUrl = async (req, res) => {
         }
 
         const viewUrl = await s3Service.getPresignedViewUrl(invoice.stored_s3_key);
+        const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || req.ip || '';
+
+        let folderName = '';
+        if (invoice.folder_id) {
+            const folder = await InvoiceFolder.findById(invoice.folder_id).select('name');
+            if (folder) folderName = folder.name;
+        }
+
+        logInvoiceActivity({
+            action: 'INVOICE_VIEWED',
+            user: req.user,
+            folderId: invoice.folder_id,
+            folderName: folderName,
+            invoiceId: invoice._id,
+            invoiceName: invoice.file_name,
+            details: { mimeType: invoice.mime_type, fileSize: invoice.file_size_bytes },
+            ipAddress: clientIp,
+        });
+
         return res.json({ viewUrl, fileName: invoice.file_name, mimeType: invoice.mime_type });
     } catch (err) {
         console.error('[Invoice] getInvoiceViewUrl error:', err);
@@ -202,6 +221,25 @@ const getInvoiceDownloadUrl = async (req, res) => {
         }
 
         const downloadUrl = await s3Service.getPresignedDownloadUrl(invoice.stored_s3_key, invoice.file_name);
+        const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || req.ip || '';
+
+        let folderName = '';
+        if (invoice.folder_id) {
+            const folder = await InvoiceFolder.findById(invoice.folder_id).select('name');
+            if (folder) folderName = folder.name;
+        }
+
+        logInvoiceActivity({
+            action: 'INVOICE_DOWNLOADED',
+            user: req.user,
+            folderId: invoice.folder_id,
+            folderName: folderName,
+            invoiceId: invoice._id,
+            invoiceName: invoice.file_name,
+            details: { fileSize: invoice.file_size_bytes },
+            ipAddress: clientIp,
+        });
+
         return res.json({ downloadUrl, fileName: invoice.file_name });
     } catch (err) {
         console.error('[Invoice] getInvoiceDownloadUrl error:', err);
@@ -221,7 +259,7 @@ const getBatchDownloadUrls = async (req, res) => {
         const invoices = await Invoice.find({
             _id: { $in: invoiceIds },
             is_deleted: false,
-        }).select('_id file_name stored_s3_key mime_type file_size_bytes');
+        }).select('_id file_name stored_s3_key mime_type file_size_bytes folder_id');
 
         const downloadList = await Promise.all(
             invoices.map(async (inv) => {
@@ -236,11 +274,13 @@ const getBatchDownloadUrls = async (req, res) => {
             })
         );
 
+        const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || req.ip || '';
+
         logInvoiceActivity({
-            action: 'CA_EXPORT_DOWNLOADED',
+            action: 'INVOICES_BATCH_DOWNLOADED',
             user: req.user,
             details: { count: downloadList.length },
-            ipAddress: req.ip,
+            ipAddress: clientIp,
         });
 
         return res.json({ files: downloadList });
