@@ -54,7 +54,7 @@ const requireFolderAccess = (actionType = 'read') => {
             }
 
             // Check if user has can_manage_invoices permission
-            const perm = await InvoicePermission.findOne({ user_id: req.user._id });
+            await InvoicePermission.findOne({ user_id: req.user._id });
             if (perm?.can_manage_invoices) {
                 req.currentFolder = folder;
                 return next();
