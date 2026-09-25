@@ -1,9 +1,10 @@
 const mongoose = require('mongoose');
 const Invoice = require('../models/invoiceModel');
 const InvoiceFolder = require('../models/invoiceFolderModel');
+const InvoicePermission = require('../models/invoicePermissionModel');
 const s3Service = require('../services/s3.service');
 const { logInvoiceActivity } = require('../services/invoiceAudit.service');
-const { resolveFolderByIdOrPath } = require('../utils/invoiceFolderHelper');
+const { resolveFolderByIdOrPath, getAllDescendantFolderIds } = require('../utils/invoiceFolderHelper');
 
 // 1. Batch Pre-signed URLs for up to 200 files (Super fast, <15ms)
 const batchPresignUpload = async (req, res) => {
@@ -127,7 +128,38 @@ const getInvoices = async (req, res) => {
                 const resolved = await resolveFolderByIdOrPath(folderId);
                 if (resolved) actualFolderId = resolved._id;
             }
-            filter.folder_id = actualFolderId;
+
+            if (req.query.includeSubfolders === 'true') {
+                const descendantIds = await getAllDescendantFolderIds(actualFolderId);
+                filter.folder_id = { $in: [actualFolderId, ...descendantIds] };
+            } else {
+                filter.folder_id = actualFolderId;
+            }
+        } else if (req.user?.role !== 'super_admin') {
+            const perm = await InvoicePermission.findOne({ user_id: req.user._id });
+            if (perm?.is_ca && perm.folder_access_type === 'custom') {
+                const baseAllowedIds = (perm.allowed_folder_ids || []).map(id => id.toString());
+                let allAccessibleIds = [...baseAllowedIds];
+                for (const fId of baseAllowedIds) {
+                    const descIds = await getAllDescendantFolderIds(fId);
+                    allAccessibleIds.push(...descIds.map(d => d.toString()));
+                }
+                filter.folder_id = { $in: [...new Set(allAccessibleIds)] };
+            } else if (!perm?.can_manage_invoices && !perm?.is_ca) {
+                const baseFolders = await InvoiceFolder.find({
+                    is_active: true,
+                    $or: [
+                        { 'created_by.user_id': req.user._id },
+                        { 'assigned_users.user_id': req.user._id },
+                    ],
+                }).select('_id');
+                let allAccessibleIds = baseFolders.map(f => f._id.toString());
+                for (const fId of baseFolders.map(f => f._id)) {
+                    const descIds = await getAllDescendantFolderIds(fId);
+                    allAccessibleIds.push(...descIds.map(d => d.toString()));
+                }
+                filter.folder_id = { $in: [...new Set(allAccessibleIds)] };
+            }
         }
 
         if (category && category !== 'all' && category.trim()) {

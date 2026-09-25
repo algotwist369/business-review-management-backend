@@ -44,6 +44,21 @@ const resolveFolderByIdOrPath = async (identifier) => {
     return foundFolder;
 };
 
+/**
+ * Helper: recursively find all descendant subfolder IDs
+ */
+const getAllDescendantFolderIds = async (folderId) => {
+    const children = await InvoiceFolder.find({ parent_id: folderId, is_active: true }).select('_id');
+    let ids = children.map(c => c._id);
+    for (const child of children) {
+        const subIds = await getAllDescendantFolderIds(child._id);
+        ids = ids.concat(subIds);
+    }
+    return ids;
+};
+
 module.exports = {
     resolveFolderByIdOrPath,
+    getAllDescendantFolderIds,
 };
+

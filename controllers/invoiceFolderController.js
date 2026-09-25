@@ -4,18 +4,7 @@ const InvoicePermission = require('../models/invoicePermissionModel');
 const Invoice = require('../models/invoiceModel');
 const User = require('../model/user');
 const { logInvoiceActivity } = require('../services/invoiceAudit.service');
-const { resolveFolderByIdOrPath } = require('../utils/invoiceFolderHelper');
-
-// Helper: recursively find all descendant subfolder IDs
-const getAllDescendantFolderIds = async (folderId) => {
-    const children = await InvoiceFolder.find({ parent_id: folderId, is_active: true }).select('_id');
-    let ids = children.map(c => c._id);
-    for (const child of children) {
-        const subIds = await getAllDescendantFolderIds(child._id);
-        ids = ids.concat(subIds);
-    }
-    return ids;
-};
+const { resolveFolderByIdOrPath, getAllDescendantFolderIds } = require('../utils/invoiceFolderHelper');
 
 // Create new invoice folder or subfolder
 const createFolder = async (req, res) => {
@@ -173,8 +162,16 @@ const getFolders = async (req, res) => {
                 return res.json({ folders, roleInInvoice: 'ca' });
             }
             if (perm.folder_access_type === 'custom') {
+                const baseAllowedIds = (perm.allowed_folder_ids || []).map(id => id.toString());
+                let allAccessibleIds = [...baseAllowedIds];
+                for (const fId of baseAllowedIds) {
+                    const descIds = await getAllDescendantFolderIds(fId);
+                    allAccessibleIds.push(...descIds.map(d => d.toString()));
+                }
+                allAccessibleIds = [...new Set(allAccessibleIds)];
+
                 const folders = await InvoiceFolder.find({
-                    _id: { $in: perm.allowed_folder_ids },
+                    _id: { $in: allAccessibleIds },
                     is_active: true,
                     ...parentFilter,
                 }).sort({ created_at: -1 });
@@ -182,18 +179,36 @@ const getFolders = async (req, res) => {
             }
         }
 
-        // 3. Admin / User: Returns folders created by user OR assigned to user
-        const query = {
+        // 3. Manager with can_manage_invoices
+        if (perm?.can_manage_invoices) {
+            const folders = await InvoiceFolder.find({ is_active: true, ...parentFilter }).sort({ created_at: -1 });
+            return res.json({ folders, roleInInvoice: 'manager' });
+        }
+
+        // 4. Admin / User: Returns folders created by user OR assigned to user, plus their subfolders
+        const baseFolders = await InvoiceFolder.find({
             is_active: true,
-            ...parentFilter,
             $or: [
                 { 'created_by.user_id': userId },
                 { 'assigned_users.user_id': userId },
             ],
+        }).select('_id');
+
+        let allAccessibleUserFolderIds = baseFolders.map(f => f._id.toString());
+        for (const fId of baseFolders.map(f => f._id)) {
+            const descIds = await getAllDescendantFolderIds(fId);
+            allAccessibleUserFolderIds.push(...descIds.map(d => d.toString()));
+        }
+        allAccessibleUserFolderIds = [...new Set(allAccessibleUserFolderIds)];
+
+        const query = {
+            is_active: true,
+            ...parentFilter,
+            _id: { $in: allAccessibleUserFolderIds },
         };
 
         const folders = await InvoiceFolder.find(query).sort({ created_at: -1 });
-        return res.json({ folders, roleInInvoice: perm?.can_manage_invoices ? 'manager' : 'member' });
+        return res.json({ folders, roleInInvoice: 'member' });
     } catch (err) {
         console.error('[InvoiceFolder] getFolders error:', err);
         return res.status(500).json({ error: 'Failed to fetch folders' });

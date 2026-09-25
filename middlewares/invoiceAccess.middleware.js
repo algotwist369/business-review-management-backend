@@ -54,7 +54,7 @@ const requireFolderAccess = (actionType = 'read') => {
             }
 
             // Check if user has can_manage_invoices permission
-            await InvoicePermission.findOne({ user_id: req.user._id });
+            const perm = await InvoicePermission.findOne({ user_id: req.user._id });
             if (perm?.can_manage_invoices) {
                 req.currentFolder = folder;
                 return next();
@@ -69,7 +69,7 @@ const requireFolderAccess = (actionType = 'read') => {
             }
 
             // 2. Is assigned user?
-            const isAssigned = folder.assigned_users.some(u => u.user_id?.toString() === userIdStr);
+            const isAssigned = Array.isArray(folder.assigned_users) && folder.assigned_users.some(u => u.user_id?.toString() === userIdStr);
             if (isAssigned) {
                 req.currentFolder = folder;
                 return next();
@@ -82,7 +82,7 @@ const requireFolderAccess = (actionType = 'read') => {
                 if (!ancestor || !ancestor.is_active) break;
                 if (
                     ancestor.created_by?.user_id?.toString() === userIdStr ||
-                    ancestor.assigned_users.some(u => u.user_id?.toString() === userIdStr)
+                    (Array.isArray(ancestor.assigned_users) && ancestor.assigned_users.some(u => u.user_id?.toString() === userIdStr))
                 ) {
                     req.currentFolder = folder;
                     return next();
@@ -90,7 +90,6 @@ const requireFolderAccess = (actionType = 'read') => {
             }
 
             // 4. Is CA with read access?
-            const perm = await InvoicePermission.findOne({ user_id: req.user._id });
             if (perm?.is_ca) {
                 if (actionType === 'write') {
                     return res.status(403).json({ error: 'CA accounts have read-only access' });
@@ -102,10 +101,23 @@ const requireFolderAccess = (actionType = 'read') => {
                 }
 
                 if (perm.folder_access_type === 'custom') {
-                    const isAllowed = perm.allowed_folder_ids.some(id => id.toString() === folderId.toString());
-                    if (isAllowed) {
+                    const allowedIds = (perm.allowed_folder_ids || []).map(id => id.toString());
+                    const currentFolderIdStr = folder._id.toString();
+
+                    if (allowedIds.includes(currentFolderIdStr)) {
                         req.currentFolder = folder;
                         return next();
+                    }
+
+                    // CA can also access any subfolders of an allowed parent folder
+                    let caAncestor = folder;
+                    while (caAncestor && caAncestor.parent_id) {
+                        caAncestor = await InvoiceFolder.findById(caAncestor.parent_id);
+                        if (!caAncestor || !caAncestor.is_active) break;
+                        if (allowedIds.includes(caAncestor._id.toString())) {
+                            req.currentFolder = folder;
+                            return next();
+                        }
                     }
                 }
             }
