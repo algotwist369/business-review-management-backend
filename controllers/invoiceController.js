@@ -298,6 +298,66 @@ const softDeleteInvoice = async (req, res) => {
     }
 };
 
+// 7b. Batch Soft Delete Invoices with Mandatory Reason
+const batchSoftDeleteInvoices = async (req, res) => {
+    try {
+        const { invoiceIds, reason } = req.body;
+
+        if (!Array.isArray(invoiceIds) || invoiceIds.length === 0) {
+            return res.status(400).json({ error: 'invoiceIds array is required' });
+        }
+
+        if (!reason || reason.trim().length < 3) {
+            return res.status(400).json({ error: 'A mandatory reason is required to delete selected invoices' });
+        }
+
+        const invoices = await Invoice.find({
+            _id: { $in: invoiceIds },
+            is_deleted: false,
+        }).populate('folder_id');
+
+        if (invoices.length === 0) {
+            return res.status(404).json({ error: 'No active invoices found to delete' });
+        }
+
+        const userIdStr = req.user._id.toString();
+        const isSuperAdmin = req.user.role === 'super_admin';
+
+        let deletedCount = 0;
+        for (const invoice of invoices) {
+            const isUploader = invoice.uploaded_by?.user_id?.toString() === userIdStr;
+            const isFolderOwner = invoice.folder_id?.created_by?.user_id?.toString() === userIdStr;
+
+            if (isSuperAdmin || isUploader || isFolderOwner) {
+                invoice.is_deleted = true;
+                invoice.deletion_meta = {
+                    deleted_by: {
+                        user_id: req.user._id,
+                        username: req.user.username || req.user.email,
+                        role: req.user.role,
+                    },
+                    deleted_at: new Date(),
+                    delete_reason: reason.trim(),
+                };
+                await invoice.save();
+                deletedCount++;
+            }
+        }
+
+        logInvoiceActivity({
+            action: 'INVOICES_BATCH_DELETED',
+            user: req.user,
+            details: { count: deletedCount, reason: reason.trim() },
+            ipAddress: req.ip,
+        });
+
+        return res.json({ message: `Successfully deleted ${deletedCount} invoices`, deletedCount });
+    } catch (err) {
+        console.error('[Invoice] batchSoftDeleteInvoices error:', err);
+        return res.status(500).json({ error: 'Failed to batch delete invoices' });
+    }
+};
+
 // 8. Super Admin Archive Vault (All Soft-Deleted Invoices + Reasons)
 const getArchiveVault = async (req, res) => {
     try {
@@ -422,6 +482,7 @@ module.exports = {
     getInvoiceDownloadUrl,
     getBatchDownloadUrls,
     softDeleteInvoice,
+    batchSoftDeleteInvoices,
     getArchiveVault,
     restoreInvoice,
     purgeInvoicePermanently,

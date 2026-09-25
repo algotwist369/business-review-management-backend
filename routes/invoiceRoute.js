@@ -20,6 +20,7 @@ router.get('/:invoiceId/download', invoiceController.getInvoiceDownloadUrl);
 router.post('/batch-download', invoiceController.getBatchDownloadUrls);
 
 // 3. Soft Delete with Mandatory Reason
+router.post('/batch-delete', invoiceController.batchSoftDeleteInvoices);
 router.delete('/:invoiceId', invoiceController.softDeleteInvoice);
 
 // 4. Super Admin Archive Vault & Purge
