@@ -1,8 +1,10 @@
+const mongoose = require('mongoose');
 const InvoiceFolder = require('../models/invoiceFolderModel');
 const InvoicePermission = require('../models/invoicePermissionModel');
 const Invoice = require('../models/invoiceModel');
 const User = require('../model/user');
 const { logInvoiceActivity } = require('../services/invoiceAudit.service');
+const { resolveFolderByIdOrPath } = require('../utils/invoiceFolderHelper');
 
 // Helper: recursively find all descendant subfolder IDs
 const getAllDescendantFolderIds = async (folderId) => {
@@ -198,11 +200,11 @@ const getFolders = async (req, res) => {
     }
 };
 
-// Get folder by ID with its subfolders and breadcrumbs
+// Get folder by ID or path with its subfolders and breadcrumbs
 const getFolderById = async (req, res) => {
     try {
         const { folderId } = req.params;
-        const folder = await InvoiceFolder.findById(folderId);
+        const folder = await resolveFolderByIdOrPath(folderId);
 
         if (!folder || !folder.is_active) {
             return res.status(404).json({ error: 'Folder not found or inactive' });
@@ -218,7 +220,7 @@ const getFolderById = async (req, res) => {
         const breadcrumbs = [];
         let curr = folder;
         while (curr && curr.parent_id) {
-            const parent = await InvoiceFolder.findById(curr.parent_id).select('_id name parent_id');
+            const parent = await InvoiceFolder.findById(curr.parent_id);
             if (parent && parent.is_active) {
                 breadcrumbs.unshift({ _id: parent._id, name: parent.name });
                 curr = parent;
@@ -228,7 +230,18 @@ const getFolderById = async (req, res) => {
         }
         breadcrumbs.push({ _id: folder._id, name: folder.name });
 
-        return res.json({ folder, subfolders, breadcrumbs });
+        // Add accumulated path to each breadcrumb for clean frontend routing:
+        let accumulatedPath = '';
+        const breadcrumbsWithPath = breadcrumbs.map(crumb => {
+            accumulatedPath += (accumulatedPath ? '/' : '') + encodeURIComponent(crumb.name);
+            return {
+                _id: crumb._id,
+                name: crumb.name,
+                path: accumulatedPath,
+            };
+        });
+
+        return res.json({ folder, subfolders, breadcrumbs: breadcrumbsWithPath });
     } catch (err) {
         console.error('[InvoiceFolder] getFolderById error:', err);
         return res.status(500).json({ error: 'Failed to fetch folder details' });
@@ -447,4 +460,5 @@ module.exports = {
     removeUserFromFolder,
     updateFolder,
     deleteFolder,
+    resolveFolderByIdOrPath,
 };

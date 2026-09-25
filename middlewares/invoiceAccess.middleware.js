@@ -1,5 +1,6 @@
 const InvoicePermission = require('../models/invoicePermissionModel');
 const InvoiceFolder = require('../models/invoiceFolderModel');
+const { resolveFolderByIdOrPath } = require('../utils/invoiceFolderHelper');
 
 /**
  * Ensures user is Super Admin
@@ -47,9 +48,16 @@ const requireFolderAccess = (actionType = 'read') => {
                 return next();
             }
 
-            const folder = await InvoiceFolder.findById(folderId);
+            const folder = await resolveFolderByIdOrPath(folderId);
             if (!folder || !folder.is_active) {
                 return res.status(404).json({ error: 'Folder not found or inactive' });
+            }
+
+            // Check if user has can_manage_invoices permission
+            const perm = await InvoicePermission.findOne({ user_id: req.user._id });
+            if (perm?.can_manage_invoices) {
+                req.currentFolder = folder;
+                return next();
             }
 
             const userIdStr = req.user._id.toString();

@@ -1,7 +1,9 @@
+const mongoose = require('mongoose');
 const Invoice = require('../models/invoiceModel');
 const InvoiceFolder = require('../models/invoiceFolderModel');
 const s3Service = require('../services/s3.service');
 const { logInvoiceActivity } = require('../services/invoiceAudit.service');
+const { resolveFolderByIdOrPath } = require('../utils/invoiceFolderHelper');
 
 // 1. Batch Pre-signed URLs for up to 200 files (Super fast, <15ms)
 const batchPresignUpload = async (req, res) => {
@@ -120,7 +122,12 @@ const getInvoices = async (req, res) => {
         const filter = { is_deleted: false };
 
         if (folderId) {
-            filter.folder_id = folderId;
+            let actualFolderId = folderId;
+            if (!mongoose.Types.ObjectId.isValid(folderId)) {
+                const resolved = await resolveFolderByIdOrPath(folderId);
+                if (resolved) actualFolderId = resolved._id;
+            }
+            filter.folder_id = actualFolderId;
         }
 
         if (category && category !== 'all' && category.trim()) {
