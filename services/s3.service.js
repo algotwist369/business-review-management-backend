@@ -27,6 +27,8 @@ const getS3Client = () => {
                     accessKeyId: process.env.AWS_ACCESS_KEY_ID.trim(),
                     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY.trim(),
                 },
+                requestChecksumCalculation: 'WHEN_REQUIRED',
+                responseChecksumValidation: 'WHEN_REQUIRED',
             });
         } else {
             console.warn('[AWS S3] AWS Credentials not set in .env. Running in simulation/mock mode for pre-signed URLs.');
@@ -70,12 +72,22 @@ const getPresignedUploadUrl = async ({ folderId, fileName, mimeType }) => {
         ContentType: mimeType || 'application/octet-stream',
     });
 
-    const uploadUrl = await getSignedUrl(client, command, { expiresIn: 3600 });
+    const uploadUrl = await getSignedUrl(client, command, {
+        expiresIn: 3600,
+        unhoistableHeaders: new Set([
+            'x-amz-checksum-crc32',
+            'x-amz-checksum-crc32c',
+            'x-amz-checksum-sha1',
+            'x-amz-checksum-sha256',
+            'x-amz-sdk-checksum-algorithm',
+        ]),
+    });
 
     return {
         uploadUrl,
         s3Key: key,
         bucket: bucketName,
+        mimeType: mimeType || 'application/octet-stream',
         isMock: false,
     };
 };
@@ -98,6 +110,7 @@ const getBatchPresignedUploadUrls = async ({ folderId, files }) => {
                 uploadUrl: `https://${bucketName}.s3.${region}.amazonaws.com/${key}?mock=true`,
                 s3Key: key,
                 bucket: bucketName,
+                mimeType: item.mimeType || 'application/octet-stream',
                 isMock: true,
             });
             continue;
@@ -109,13 +122,23 @@ const getBatchPresignedUploadUrls = async ({ folderId, files }) => {
             ContentType: item.mimeType || 'application/octet-stream',
         });
 
-        // Fast parallel URL signing
-        const uploadUrlPromise = getSignedUrl(client, command, { expiresIn: 3600 });
+        // Fast parallel URL signing with unhoistable checksum headers
+        const uploadUrlPromise = getSignedUrl(client, command, {
+            expiresIn: 3600,
+            unhoistableHeaders: new Set([
+                'x-amz-checksum-crc32',
+                'x-amz-checksum-crc32c',
+                'x-amz-checksum-sha1',
+                'x-amz-checksum-sha256',
+                'x-amz-sdk-checksum-algorithm',
+            ]),
+        });
         results.push({
             fileId: item.fileId || `file_${i}`,
             fileName: item.fileName,
             s3Key: key,
             bucket: bucketName,
+            mimeType: item.mimeType || 'application/octet-stream',
             uploadUrlPromise,
         });
     }
@@ -130,6 +153,7 @@ const getBatchPresignedUploadUrls = async ({ folderId, files }) => {
                     fileName: res.fileName,
                     s3Key: res.s3Key,
                     bucket: res.bucket,
+                    mimeType: res.mimeType,
                     uploadUrl,
                     isMock: false,
                 };
