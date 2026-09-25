@@ -231,19 +231,42 @@ const getFolderById = async (req, res) => {
             is_active: true,
         }).sort({ name: 1 });
 
-        // Build breadcrumbs up to root
+        // Build breadcrumbs up to root and collect effective assigned users from ancestors
         const breadcrumbs = [];
         let curr = folder;
+        const effectiveAssignedUsers = [...(folder.assigned_users || [])];
+        const assignedIdsSet = new Set(effectiveAssignedUsers.map(u => (u.user_id?.toString() || u._id?.toString())));
+
         while (curr && curr.parent_id) {
             const parent = await InvoiceFolder.findById(curr.parent_id);
             if (parent && parent.is_active) {
-                breadcrumbs.unshift({ _id: parent._id, name: parent.name });
+                breadcrumbs.unshift({
+                    _id: parent._id,
+                    name: parent.name,
+                    assigned_users: parent.assigned_users,
+                    created_by: parent.created_by,
+                });
+
+                if (Array.isArray(parent.assigned_users)) {
+                    for (const u of parent.assigned_users) {
+                        const uid = (u.user_id?.toString() || u._id?.toString());
+                        if (uid && !assignedIdsSet.has(uid)) {
+                            assignedIdsSet.add(uid);
+                            effectiveAssignedUsers.push(u);
+                        }
+                    }
+                }
                 curr = parent;
             } else {
                 break;
             }
         }
-        breadcrumbs.push({ _id: folder._id, name: folder.name });
+        breadcrumbs.push({
+            _id: folder._id,
+            name: folder.name,
+            assigned_users: folder.assigned_users,
+            created_by: folder.created_by,
+        });
 
         // Add accumulated path to each breadcrumb for clean frontend routing:
         let accumulatedPath = '';
@@ -253,10 +276,16 @@ const getFolderById = async (req, res) => {
                 _id: crumb._id,
                 name: crumb.name,
                 path: accumulatedPath,
+                assigned_users: crumb.assigned_users,
+                created_by: crumb.created_by,
             };
         });
 
-        return res.json({ folder, subfolders, breadcrumbs: breadcrumbsWithPath });
+        const folderObj = folder.toObject ? folder.toObject() : { ...folder };
+        folderObj.assigned_users = effectiveAssignedUsers;
+        folderObj.effective_assigned_users = effectiveAssignedUsers;
+
+        return res.json({ folder: folderObj, subfolders, breadcrumbs: breadcrumbsWithPath });
     } catch (err) {
         console.error('[InvoiceFolder] getFolderById error:', err);
         return res.status(500).json({ error: 'Failed to fetch folder details' });
@@ -298,6 +327,22 @@ const assignUsersToFolder = async (req, res) => {
         folder.assigned_users.push(...newAssignments);
         await folder.save();
 
+        // Cascade assignments to all existing descendant subfolders
+        const descendantIds = await getAllDescendantFolderIds(folder._id);
+        if (descendantIds.length > 0 && newAssignments.length > 0) {
+            for (const descId of descendantIds) {
+                const subfolder = await InvoiceFolder.findById(descId);
+                if (subfolder && subfolder.is_active) {
+                    const subExisting = new Set((subfolder.assigned_users || []).map(u => u.user_id.toString()));
+                    const toAdd = newAssignments.filter(a => !subExisting.has(a.user_id.toString()));
+                    if (toAdd.length > 0) {
+                        subfolder.assigned_users.push(...toAdd);
+                        await subfolder.save();
+                    }
+                }
+            }
+        }
+
         logInvoiceActivity({
             action: 'FOLDER_ASSIGNED',
             user: req.user,
@@ -326,6 +371,17 @@ const removeUserFromFolder = async (req, res) => {
 
         folder.assigned_users = folder.assigned_users.filter(u => u.user_id.toString() !== userId);
         await folder.save();
+
+        // Cascade removal to all descendant subfolders
+        const descendantIds = await getAllDescendantFolderIds(folder._id);
+        if (descendantIds.length > 0) {
+            for (const descId of descendantIds) {
+                await InvoiceFolder.updateOne(
+                    { _id: descId },
+                    { $pull: { assigned_users: { user_id: userId } } }
+                );
+            }
+        }
 
         logInvoiceActivity({
             action: 'FOLDER_UPDATED',
