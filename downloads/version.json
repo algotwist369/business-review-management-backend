@@ -1,6 +1,7 @@
 {
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Omega Desktop",
+  "pub_date": "2026-09-25T12:00:00Z",
   "url": "https://brm.api.d0s369.co.in/downloads/Omega-Setup.exe",
-  "releaseNotes": "Performance boost with hardware acceleration, WhatsApp-style instant notifications, fully responsive navbar, and automatic background updates."
+  "releaseNotes": "High-Performance Invoice Management: bulk upload up to 200 files with client-side compression, folder delegation, CA compliance portal with year/month filters & batch ZIP export, and secure archive vault with mandatory deletion reasons."
 }

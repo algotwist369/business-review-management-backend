@@ -30,6 +30,7 @@ if (cluster.isPrimary && useCluster) {
     const { connectReviewDB } = require('./config/reviewDb');
     const { connectSupportDB } = require('./config/supportDb');
     const { connectTaskDB, taskConnection } = require('./config/taskDb');
+    const { connectInvoiceDB } = require('./config/invoiceDb');
     const cors = require('cors');
     const helmet = require('helmet');
     const compression = require('compression');
@@ -96,6 +97,9 @@ if (cluster.isPrimary && useCluster) {
     connectTaskDB().catch((error) => {
         console.error('Task MongoDB connection error:', error);
     });
+    connectInvoiceDB().catch((error) => {
+        console.error('Invoice MongoDB connection error:', error);
+    });
 
     // Start cron jobs only on the first worker or if not in cluster mode to avoid duplicate runs
     if (!cluster.isWorker || (cluster.worker && cluster.worker.id === 1)) {
@@ -127,6 +131,10 @@ if (cluster.isPrimary && useCluster) {
     app.use('/api/support', require('./routes/supportRoute'));
     app.use('/api/chat', require('./routes/chatRoute'));
     app.use('/api/tasks', require('./routes/taskRoute'));
+    app.use('/api/invoice-permissions', require('./routes/invoicePermissionRoute'));
+    app.use('/api/invoice-folders', require('./routes/invoiceFolderRoute'));
+    app.use('/api/invoices', require('./routes/invoiceRoute'));
+    app.use('/api/invoice-activity-logs', require('./routes/invoiceActivityLogRoute'));
 
 
     // ==========================
