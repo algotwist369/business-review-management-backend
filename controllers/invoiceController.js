@@ -123,10 +123,22 @@ const getInvoices = async (req, res) => {
         const filter = { is_deleted: false };
 
         if (folderId) {
-            let actualFolderId = folderId;
-            if (!mongoose.Types.ObjectId.isValid(folderId)) {
+            let actualFolderId = null;
+            if (mongoose.Types.ObjectId.isValid(folderId) && /^[0-9a-fA-F]{24}$/.test(String(folderId).trim())) {
+                actualFolderId = folderId;
+            } else {
                 const resolved = await resolveFolderByIdOrPath(folderId);
                 if (resolved) actualFolderId = resolved._id;
+            }
+
+            if (!actualFolderId) {
+                return res.json({
+                    invoices: [],
+                    total: 0,
+                    categories: [],
+                    page: 1,
+                    totalPages: 0,
+                });
             }
 
             if (req.query.includeSubfolders === 'true') {
