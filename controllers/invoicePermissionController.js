@@ -76,7 +76,7 @@ const upsertPermission = async (req, res) => {
                     username: req.user.username || req.user.email,
                 },
             },
-            { upsert: true, new: true }
+            { upsert: true, returnDocument: 'after' }
         );
 
         logInvoiceActivity({
